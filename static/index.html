@@ -148,6 +148,9 @@
       <label for="model">Modelo</label>
       <select id="model"></select>
       <div class="row" id="dlRow" hidden><button class="btn" id="dlBtn">Descargar ahora</button></div>
+      <div class="row win"><button class="btn" id="importBtn">Importar modelo (.zip)…</button></div>
+      <label for="dlsource" style="margin-top:10px">Descargar modelos desde</label>
+      <select id="dlsource"></select>
       <div class="hint" id="modelHint"></div>
       <div class="hint" id="modelSource"></div>
     </div>
@@ -400,6 +403,11 @@ function syncModel() {
   $('modelSource').textContent = m.source ? (m.download ? 'Fuente: ' : '') + m.source : '';
   syncLang();
 }
+$('importBtn').onclick = async () => {
+  const r = await post('/import-model');
+  if (r.text) { $('status').textContent = r.text; $('status').title = r.text; }
+  if (r.ok) loadModels(r.select);
+};
 $('dlBtn').onclick = () => { const m = modelInfo[$('model').value]; if (m && m.download) startDownload(m.download); };
 async function loadModels(select) {
   const mres = await fetch('/models').then(r => r.json());
@@ -430,6 +438,7 @@ $('close').onclick = async () => {
     post('/close', { force: true });
 };
 $('model').onchange = syncModel;
+$('dlsource').onchange = () => post('/settings', { download_source: $('dlsource').value });
 $('cpumode').onchange = () => post('/settings', { cpu_mode: $('cpumode').value });
 $('copy').onclick = () => navigator.clipboard.writeText(
   [...document.querySelectorAll('.line:not(.partial)')].map(l => `[${l.querySelector('.meta span:last-child').textContent}] [${l.querySelector('.tag').textContent}] ${l.querySelector('.say').textContent}`).join('\n'));
@@ -471,6 +480,8 @@ Promise.all([
   $('cpuField').hidden = mres.gpu;
   Object.entries(mres.cpu_modes).forEach(([k, v]) => $('cpumode').add(new Option(`${{ ligero: 'Ligero', equilibrado: 'Equilibrado', maximo: 'Máximo' }[k] || k} — ${v}`, k)));
   $('cpumode').value = s.cpu_mode;
+  Object.entries(mres.sources).forEach(([k, v]) => $('dlsource').add(new Option(v, k)));
+  $('dlsource').value = s.download_source;
   isWindow = info.window;
   if (!isWindow) document.querySelectorAll('#pin, .win, #browse').forEach(el => el.style.display = 'none');
   $('lang').value = s.language;

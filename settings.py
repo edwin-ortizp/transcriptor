@@ -14,6 +14,7 @@ DEFAULTS = {
     "opacity_hover": True,
     "live_partials": True,
     "cpu_mode": "ligero",
+    "download_source": "auto",
 }
 
 

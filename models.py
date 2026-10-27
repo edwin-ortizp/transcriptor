@@ -71,7 +71,7 @@ def discover():
             spec = download.SPECS[key]
             found.append({"id": "dl:" + key, "label": f"{spec['label']} (descargar ~{spec['mb']:,} MB)".replace(",", "."),
                           "path": "", "engine": engine, "download": key,
-                          "source": f"huggingface.co/{spec['repo']} · {spec['origin']}"})
+                          "source": f"huggingface.co/{spec['repo']} o la release de GitHub · {spec['origin']}"})
     return found
 
 

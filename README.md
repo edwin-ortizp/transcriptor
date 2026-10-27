@@ -37,7 +37,16 @@ El repositorio Git contiene **solo el código** (< 1 MB, más la fuente Nunito).
 | Whisper large-v3-turbo | [mobiuslabsgmbh/faster-whisper-large-v3-turbo](https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo) — conversión a CTranslate2 de Mobius Labs | OpenAI `whisper-large-v3-turbo`, MIT |
 | Parakeet TDT v3 | [istupakov/parakeet-tdt-0.6b-v3-onnx](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) — conversión a ONNX (int8) | NVIDIA `parakeet-tdt-0.6b-v3`, CC-BY-4.0 |
 
-**Tres formas de tener el modelo en un equipo:** (1) descarga automática a `modelos/` (`python app.py --download turbo` o el botón en la app); (2) copiar a mano la carpeta de un modelo a `modelos/` (p. ej. `multi_turbo` de SpeechPulse, sin internet); (3) tener SpeechPulse instalado. En ⚙, debajo del modelo, se ve de dónde viene el elegido.
+**Copia en GitHub (si Hugging Face está bloqueado):** los mismos modelos están como `.zip` en la release [`modelos-v1`](https://github.com/edwin-ortizp/transcriptor/releases/tag/modelos-v1) de este repositorio, con su licencia y `ORIGEN.md` dentro (`whisper-large-v3-turbo.zip` ~1,5 GB, `parakeet-tdt-v3.zip` ~640 MB). Se generan con `python tools/empaquetar_modelos.py` a partir de los modelos de SpeechPulse. Los `.zip` no están en el historial de Git: son archivos adjuntos de la release.
+
+**Formas de tener el modelo en un equipo:**
+1. **Descarga automática** (`python app.py --download turbo` o el botón en la app): intenta Hugging Face y, si no responde, usa la release de GitHub.
+   - **Solo GitHub** (equipos donde Hugging Face está bloqueado): `python app.py --download turbo --source github`, o en ⚙ → "Descargar modelos desde" → "Solo GitHub" (queda guardado). Así la app **nunca** contacta Hugging Face: ni para descargar ni las librerías por su cuenta (`HF_HUB_OFFLINE=1`). Con un modelo ya instalado, la app no hace ninguna conexión de red.
+2. **Importar un .zip** bajado a mano desde la release (con el navegador): ⚙ → "Importar modelo (.zip)…" o `python app.py --import whisper-large-v3-turbo.zip`.
+3. **Copiar la carpeta** de un modelo a `modelos/` (p. ej. `multi_turbo` de SpeechPulse).
+4. **Tener SpeechPulse instalado.**
+
+En ⚙, debajo del modelo, se ve de dónde viene el elegido.
 
 ## Instalar en un portátil (sin GPU ni SpeechPulse)
 

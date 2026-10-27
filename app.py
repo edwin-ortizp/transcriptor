@@ -40,6 +40,9 @@ parser.add_argument("--dict", help="TSV(s) de correcciones separados por ;")
 parser.add_argument("--port", type=int, default=DEFAULT_PORT)
 parser.add_argument("--threads", type=int, help="núcleos máximos en CPU (por defecto, según 'Uso del procesador')")
 parser.add_argument("--download", choices=list(download.SPECS), help="descargar un modelo y salir")
+parser.add_argument("--source", choices=list(download.SOURCES),
+                    help="de dónde descargar: auto (Hugging Face y luego GitHub), github o huggingface")
+parser.add_argument("--import", dest="import_zip", metavar="ZIP", help="importar un modelo desde un .zip y salir")
 ARGS, _ = parser.parse_known_args()
 
 
@@ -55,6 +58,14 @@ def lower_priority():
 
 
 lower_priority()
+
+
+def download_source():
+    return ARGS.source or settings.load()["download_source"]
+
+
+if download_source() == "github":
+    download.github_only()
 GPU = (not ARGS.cpu) and transcriber.has_gpu()
 
 app = FastAPI()
@@ -370,6 +381,7 @@ class SettingsReq(BaseModel):
     opacity_hover: bool | None = None
     live_partials: bool | None = None
     cpu_mode: str | None = None
+    download_source: str | None = None
 
 
 class SourceReq(BaseModel):
@@ -407,7 +419,7 @@ def list_models():
             label += " — lento sin GPU"
         out.append({"id": m["id"], "label": label, "engine": m["engine"], "slow": slow,
                     "turbo": turbo, "download": m.get("download"), "source": m.get("source", "")})
-    return {"gpu": GPU, "models": out, "cpu_modes": transcriber.CPU_MODES,
+    return {"gpu": GPU, "models": out, "cpu_modes": transcriber.CPU_MODES, "sources": download.SOURCES,
             "cores": os.cpu_count()}
 
 
@@ -429,7 +441,9 @@ def start_download(key: str):
 
     def run():
         try:
-            path = download.download(key, progress)
+            path = download.download(key, progress, log=lambda m: broadcast(
+                {"type": "download", "key": key, "text": m.replace("[descarga] ", "")}),
+                source=download_source())
             broadcast({"type": "download", "key": key, "done": True, "select": path.name,
                        "text": f"{spec['label']} descargado. Ya no se vuelve a descargar."})
         except Exception as exc:
@@ -517,6 +531,10 @@ def post_settings(req: SettingsReq):
         settings.save({"opacity": max(0.2, min(1.0, req.opacity))})
     if req.opacity_hover is not None:
         settings.save({"opacity_hover": req.opacity_hover})
+    if req.download_source in download.SOURCES:
+        settings.save({"download_source": req.download_source})
+        if req.download_source == "github":
+            download.github_only()
     if req.cpu_mode in transcriber.CPU_MODES:
         settings.save({"cpu_mode": req.cpu_mode})
     if req.live_partials is not None:
@@ -594,6 +612,24 @@ def browse_dict():
     return {"path": res[0] if res else None}
 
 
+@app.post("/import-model")
+def import_model():
+    """Elige un .zip con el selector de archivos y lo instala en modelos/."""
+    if window is None:
+        return {"ok": False, "text": "Solo disponible en la ventana de la app"}
+    import webview
+    res = window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False,
+                                    file_types=("Modelo (*.zip)", "Todos (*.*)"))
+    if not res:
+        return {"ok": False}
+    try:
+        broadcast({"type": "status", "text": "Importando modelo… (puede tardar un minuto)"})
+        path = download.import_zip(res[0])
+    except Exception as exc:
+        return {"ok": False, "text": f"No se pudo importar: {exc}"}
+    return {"ok": True, "select": path.name, "text": f"Modelo importado en modelos/{path.name}"}
+
+
 @app.post("/open-dict")
 def open_dict():
     for p in fixes.paths:
@@ -652,7 +688,11 @@ def run_window(url, port):
 
 
 if __name__ == "__main__" and ARGS.download:
-    download.cli(ARGS.download)
+    download.cli(ARGS.download, download_source())
+    sys.exit(0)
+
+if __name__ == "__main__" and ARGS.import_zip:
+    download.cli_import(ARGS.import_zip)
     sys.exit(0)
 
 if __name__ == "__main__":
