@@ -4,6 +4,7 @@ from pathlib import Path
 
 PATH = Path(__file__).parent / "settings.json"
 DEFAULTS = {
+    "output_dir": "",
     "use_mic": False,
     "mic_id": "",
     "speaker_id": "",

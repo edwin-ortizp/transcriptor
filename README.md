@@ -116,3 +116,14 @@ Un portátil de hace varios años puede ser 2–3× más lento que el PC de las 
 - **[Otros]** es todo lo que suena por la salida elegida (Teams, Meet, Zoom…). **[Yo]** es el micrófono elegido.
 - Con el micrófono activo, usa audífonos; si no, el mic capta a los demás y el texto sale duplicado.
 - No distingue entre las distintas personas remotas: todas quedan como [Otros].
+
+## Carpeta de guardado y sesiones
+
+En ⚙ → **Carpeta de transcripciones** puedes escribir una ruta o usar **Examinar…** en la ventana nativa. **Aplicar** comprueba que se pueda escribir y guarda la preferencia; **Restablecer** vuelve a `transcripciones/`. En navegador se introduce la ruta manualmente. **Abrir carpeta** abre el destino configurado. Los cambios se aplican a la siguiente sesión: nunca trasladan el archivo actual.
+
+- **Iniciar** crea un TXT exclusivo. Si el nombre ya existe, añade un número sin sobrescribirlo.
+- **Pausar** detiene la captura y procesa lo pendiente. Después, **Reanudar** continúa en el mismo TXT; las marcas de tiempo excluyen la pausa. Ambas acciones quedan anotadas.
+- **Terminar** procesa todo el audio pendiente y cierra el TXT, también si estabas en pausa.
+- **Nueva sesión** limpia la pantalla y restablece el título a «Reunión». Pulsa **Iniciar** para grabar en otro archivo sin cerrar el programa. El archivo anterior se conserva.
+
+Durante el procesamiento se muestra «Pausando…» o «Terminando…» y se bloquean las acciones incompatibles. Modelo, idioma y uso del procesador se mantienen hasta terminar. La sesión finalizada permanece visible y se puede copiar o abrir su TXT; no se reabren sesiones de ejecuciones anteriores.

@@ -81,6 +81,12 @@
   .hint.ok { color: #66bb6a; } .hint.err { color: var(--red); }
   input[type=range] { width: 100%; accent-color: var(--accent); }
 
+  button:disabled { opacity: .45; cursor: default; }
+  .hint { overflow-wrap: anywhere; }
+  footer { flex-wrap: wrap; }
+  #toggle { padding: 6px 10px; font-size: 12px; }
+  #finish { padding: 6px 8px; font-size: 12px; }
+  @media (max-width: 330px) { footer { gap: 4px; padding-inline: 8px; } .src .tg { width: 26px; } .src .dd { width: 16px; } }
   /* Pie */
   #status { font-size: 11px; color: var(--muted); padding: 4px 16px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   footer { display: flex; align-items: center; gap: 8px; padding: 8px 14px 14px; position: relative; }
@@ -106,6 +112,14 @@
   #toggle.on { border-color: var(--red); color: var(--text); }
   #toggle.on .dot { color: var(--red); }
   #toggle.on:hover { background: rgba(239,83,80,.12); }
+  #toggle.pause-only { width: 34px; height: 34px; padding: 0; justify-content: center; flex-shrink: 0; }
+  #toggle.pause-only .dot, #toggle.pause-only #tlabel { display: none; }
+  #toggle .pause-icon { width: 16px; height: 16px; }
+  @media (max-width: 400px) { #wave { display: none; } }
+  @media (max-width: 330px) {
+    footer { gap: 4px; padding-inline: 8px; }
+    #toggle { padding: 6px 8px; font-size: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -134,6 +148,18 @@
   </div>
 
   <div id="settings">
+    <div class="field">
+      <label for="outputDir">Carpeta de transcripciones</label>
+      <input class="txt" id="outputDir" spellcheck="false" placeholder="Carpeta predeterminada">
+      <div class="row" style="flex-wrap:wrap">
+        <button class="btn" id="outputBrowse">Examinar…</button>
+        <button class="btn" id="outputSave">Aplicar</button>
+        <button class="btn" id="outputReset">Restablecer</button>
+        <button class="btn" id="outputOpen">Abrir carpeta</button>
+      </div>
+      <div id="outputInfo" class="hint" role="status"></div>
+      <div class="hint">Se aplica a sesiones nuevas. La sesión actual conserva su archivo.</div>
+    </div>
     <div class="field win">
       <label for="opacity">Transparencia · <span id="opv"></span></label>
       <input type="range" id="opacity" min="30" max="100" step="5">
@@ -200,24 +226,31 @@
   </div>
   <div class="spacer"></div>
   <div class="menu" id="menu" hidden></div>
-  <button id="toggle"><span class="dot">●</span><span id="tlabel">Iniciar</span></button>
+  <button id="finish" class="btn" hidden>Terminar</button>
+  <button id="toggle" title="Iniciar" aria-label="Iniciar"><span class="dot" aria-hidden="true">●</span><span id="tlabel">Iniciar</span><svg class="pause-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" hidden><rect x="3" y="2" width="4" height="12" rx="1"/><rect x="9" y="2" width="4" height="12" rx="1"/></svg></button>
 </footer>
 
 <script>
 const $ = id => document.getElementById(id);
 const post = (url, body) => fetch(url, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
-}).then(r => r.json());
-let running = false;
+ }).then(async r => {
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || 'No se pudo completar la acción');
+  return data;
+});
+let revision = -1;
+let running = false, sessionState = 'ready', sessionId = null, sessionModel = null, sessionLanguage = null;
+const lockedSession = () => !['ready', 'finished'].includes(sessionState);
 const engines = {};
 const levels = { Yo: 0, Otros: 0 };
 
 // --- Título (doble clic para renombrar) ---
-const defaultTitle = () => 'Reunión · ' + new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+const defaultTitle = () => 'Reunión';
 $('title').textContent = defaultTitle();
 const editing = () => $('title').isContentEditable;
 $('title').ondblclick = () => {
-  if (running) return;
+  if (lockedSession()) return;
   const t = $('title');
   t.contentEditable = 'true'; t.focus();
   document.getSelection().selectAllChildren(t);
@@ -258,7 +291,7 @@ animate();
 // --- Estado ---
 function syncLang() {
   const auto = engines[$('model').value] === 'parakeet';
-  $('lang').disabled = running || auto;
+  $('lang').disabled = lockedSession() || auto;
   $('lang').title = auto ? 'Parakeet detecta el idioma automáticamente' : '';
 }
 // --- Fuentes (micrófono y audio de la reunión), cambiables en caliente ---
@@ -312,12 +345,41 @@ $('live').onchange = () => post('/settings', { live_partials: $('live').checked 
 $('ophover').onchange = () => { opHover = $('ophover').checked; post('/settings', { opacity_hover: opHover }); };
 document.documentElement.addEventListener('mouseenter', () => { if (opHover && opacity < 1) applyOpacity(1); });
 document.documentElement.addEventListener('mouseleave', () => { if (opacity < 1) applyOpacity(opacity); });
-function setRunning(r) {
-  running = r;
-  $('tlabel').textContent = r ? 'Terminar' : 'Iniciar';
-  $('toggle').classList.toggle('on', r);
-  $('model').disabled = r;
-  $('listening').hidden = !r;
+function clearTranscript() {
+  document.querySelectorAll('#log .line, #log .note').forEach(el => el.remove());
+  $('empty').hidden = false;
+  $('title').textContent = defaultTitle();
+}
+function setState(m) {
+  if (!m.state) return;
+  if ((sessionId && m.session_id !== sessionId) || m.state === 'ready') clearTranscript();
+  sessionId = m.session_id;
+  sessionState = m.state;
+  running = m.state === 'recording';
+  if (m.model) sessionModel = m.model;
+  if (m.language !== undefined && m.language !== null) sessionLanguage = m.language;
+  if (lockedSession() && m.title) $('title').textContent = m.title;
+  if (lockedSession() && sessionModel) $('model').value = sessionModel;
+  if (lockedSession() && sessionLanguage !== null) $('lang').value = sessionLanguage;
+  const busy = ['starting', 'pausing', 'finishing'].includes(m.state);
+  $('tlabel').textContent = ({ready:'Iniciar', starting:'Iniciando…', recording:'Pausar',
+    pausing:'Pausando…', paused:'Reanudar', finishing:'Terminando…', finished:'Nueva sesión'})[m.state];
+  $('toggle').classList.toggle('pause-only', running);
+  $('toggle').querySelector('.pause-icon').toggleAttribute('hidden', !running);
+  $('toggle').title = $('tlabel').textContent;
+  $('toggle').setAttribute('aria-label', $('tlabel').textContent);
+  $('toggle').disabled = busy || !!downloadingKey;
+  $('toggle').classList.toggle('on', running);
+  $('finish').hidden = !['recording', 'paused', 'pausing', 'finishing'].includes(m.state);
+  $('finish').disabled = busy;
+  $('model').disabled = lockedSession();
+  $('cpumode').disabled = lockedSession();
+  document.querySelectorAll('.src button').forEach(b => b.disabled = busy);
+  $('listening').hidden = !running;
+  if (['paused', 'finished', 'ready'].includes(m.state))
+    document.querySelectorAll('.partial').forEach(el => el.remove());
+  $('open').disabled = !m.path;
+  $('open').title = m.path || 'Inicia una sesión para crear el archivo';
   syncLang();
 }
 
@@ -325,10 +387,21 @@ function setRunning(r) {
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = e => {
-    const m = JSON.parse(e.data);
+    handleMessage(JSON.parse(e.data));
+  };
+  ws.onclose = () => { $('status').textContent = 'Reconectando…'; setTimeout(connect, 1500); };
+}
+function handleMessage(m) {
+    if (m.session_id !== undefined && m.type !== 'status' && m.session_id !== sessionId) return;
     if (m.type === 'status') {
+      if (m.revision !== undefined && m.revision < revision) return;
+      if (m.revision !== undefined) revision = m.revision;
       $('status').textContent = m.text; $('status').title = m.text;
-      if (m.running !== undefined) setRunning(m.running);
+      setState(m);
+      if (m.history) {
+        document.querySelectorAll('#log .line, #log .note').forEach(el => el.remove());
+        m.history.forEach(handleMessage);
+      }
     } else if (m.type === 'download') {
       $('status').textContent = m.text; $('status').title = m.text;
       if (m.done || m.error) {
@@ -378,8 +451,6 @@ function connect() {
       else log.insertBefore(d, prev || $('listening'));
       if (atBottom) log.scrollTop = log.scrollHeight;
     }
-  };
-  ws.onclose = () => { $('status').textContent = 'Reconectando…'; setTimeout(connect, 1500); };
 }
 
 // --- Controles ---
@@ -420,15 +491,27 @@ async function loadModels(select) {
   return mres;
 }
 
+async function sessionAction(url, body) {
+  $('toggle').disabled = true; $('finish').disabled = true;
+  try {
+    const m = await post(url, body);
+    handleMessage(m);
+  } catch (e) {
+    $('status').textContent = e.message;
+    setState({state:sessionState, session_id:sessionId, path:$('open').disabled ? null : $('open').title});
+  }
+}
 $('toggle').onclick = async () => {
-  if (running) return post('/stop');
+  if (sessionState === 'recording') return sessionAction('/pause');
+  if (sessionState === 'paused') return sessionAction('/resume');
+  if (sessionState === 'finished') return sessionAction('/new-session');
+  if (sessionState !== 'ready') return;
   const m = modelInfo[$('model').value];
   if (m && m.download) { startAfterDownload = true; return startDownload(m.download); }
-  setRunning(true);
   $('settings').classList.remove('open'); $('gear').classList.remove('active');
-  $('status').textContent = 'Iniciando…';
-  post('/start', { language: $('lang').value, model: $('model').value, title: $('title').textContent });
+  return sessionAction('/start', { language: $('lang').value, model: $('model').value, title: $('title').textContent });
 };
+$('finish').onclick = () => sessionAction('/stop');
 $('gear').onclick = () => $('gear').classList.toggle('active', $('settings').classList.toggle('open'));
 $('pin').onclick = async () => $('pin').classList.toggle('active', (await post('/pin')).pinned);
 $('min').onclick = () => post('/minimize');
@@ -443,6 +526,27 @@ $('cpumode').onchange = () => post('/settings', { cpu_mode: $('cpumode').value }
 $('copy').onclick = () => navigator.clipboard.writeText(
   [...document.querySelectorAll('.line:not(.partial)')].map(l => `[${l.querySelector('.meta span:last-child').textContent}] [${l.querySelector('.tag').textContent}] ${l.querySelector('.say').textContent}`).join('\n'));
 $('open').onclick = () => post('/open');
+
+// --- Carpeta de transcripciones ---
+function showOutput(s) {
+  $('outputDir').value = s.output_dir;
+  $('outputInfo').className = 'hint ok';
+  $('outputInfo').textContent = 'Carpeta: ' + s.effective_output_dir;
+}
+async function saveOutput(value) {
+  try { showOutput(await post('/settings', {output_dir:value})); }
+  catch (e) { $('outputInfo').className = 'hint err'; $('outputInfo').textContent = e.message; }
+}
+$('outputSave').onclick = () => saveOutput($('outputDir').value);
+$('outputReset').onclick = () => saveOutput('');
+$('outputBrowse').onclick = async () => {
+  try { const r = await post('/browse-output'); if (r.path) $('outputDir').value = r.path; }
+  catch (e) { $('outputInfo').textContent = e.message; }
+};
+$('outputOpen').onclick = async () => {
+  try { await post('/open-output'); }
+  catch (e) { $('outputInfo').className = 'hint err'; $('outputInfo').textContent = e.message; }
+};
 
 // --- Diccionario ---
 function showDict(s) {
@@ -476,15 +580,15 @@ Promise.all([
   const saved = list.find(m => m.id === s.model && !m.download);
   const pick = (saved && !(saved.slow && !mres.gpu)) ? saved
     : list.find(m => m.turbo && !m.download) || list.find(m => m.engine === 'parakeet' && !m.download) || list[0];
-  if (pick) { $('model').value = pick.id; syncModel(); }
+  if (pick) { $('model').value = lockedSession() && sessionModel ? sessionModel : pick.id; syncModel(); }
   $('cpuField').hidden = mres.gpu;
   Object.entries(mres.cpu_modes).forEach(([k, v]) => $('cpumode').add(new Option(`${{ ligero: 'Ligero', equilibrado: 'Equilibrado', maximo: 'Máximo' }[k] || k} — ${v}`, k)));
   $('cpumode').value = s.cpu_mode;
   Object.entries(mres.sources).forEach(([k, v]) => $('dlsource').add(new Option(v, k)));
   $('dlsource').value = s.download_source;
   isWindow = info.window;
-  if (!isWindow) document.querySelectorAll('#pin, .win, #browse').forEach(el => el.style.display = 'none');
-  $('lang').value = s.language;
+  if (!isWindow) document.querySelectorAll('#pin, .win, #browse, #outputBrowse').forEach(el => el.style.display = 'none');
+  $('lang').value = lockedSession() && sessionLanguage !== null ? sessionLanguage : s.language;
   devices = dev;
   showSources(src);
   opacity = s.opacity; opHover = s.opacity_hover;
@@ -492,6 +596,7 @@ Promise.all([
   $('ophover').checked = opHover;
   $('live').checked = s.live_partials;
   showDict(s);
+  showOutput(s);
   syncLang();
 });
 connect();

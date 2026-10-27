@@ -8,11 +8,13 @@ import sys
 import threading
 import time
 import webbrowser
+import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -27,6 +29,20 @@ import transcriber
 BASE = Path(__file__).parent
 OUT_DIR = BASE / "transcripciones"
 OUT_DIR.mkdir(exist_ok=True)
+
+def output_dir(value=None):
+    value = settings.load()["output_dir"] if value is None else value
+    path = Path(os.path.expandvars(value)).expanduser() if value.strip() else OUT_DIR
+    return (BASE / path).resolve() if not path.is_absolute() else path.resolve()
+
+
+def validate_output(value):
+    path = output_dir(value)
+    path.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryFile(dir=path):
+        pass
+    return path
+
 
 if sys.stdout is None:  # pythonw: sin consola, el log va a un archivo
     sys.stdout = sys.stderr = open(BASE / "transcriptor.log", "a", encoding="utf-8", buffering=1)
@@ -86,8 +102,19 @@ def broadcast(msg: dict):
 
 class Session:
     def __init__(self):
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.file_lock = threading.Lock()
+        self.revision = 0
+        self.state = "ready"
+        self.session_id = None
+        self.status_text = "Listo"
+        self.paused_at = None
+        self.partial_worker = None
+        self.history = []
+        self.failure_text = ""
+        self.title = "Reunión"
+        self.model_name = None
+        self.language = None
         self.running = False  # sesión pedida (incluye la carga del modelo)
         self.active = False   # capturas y archivo listos: ya se pueden cambiar fuentes en caliente
         self.models = {}
@@ -116,6 +143,87 @@ class Session:
             "Otros": {"enabled": True, "id": prefs["speaker_id"]},
         }
 
+    def snapshot(self):
+        return {"type": "status", "revision": self.revision, "state": self.state, "session_id": self.session_id,
+                "path": str(self.path) if self.path else None,
+                "running": self.active, "text": self.status_text,
+                "title": self.title, "model": self.model_name, "language": self.language}
+
+    def status(self, state, text):
+        self.revision += 1
+        self.state, self.status_text = state, text
+        broadcast(self.snapshot())
+
+    def emit(self, msg):
+        msg = {**msg, "session_id": self.session_id}
+        if msg["type"] in ("text", "note"):
+            self.history.append(msg)
+        broadcast(msg)
+
+    def begin(self, req):
+        with self.lock:
+            if self.state != "ready":
+                raise HTTPException(409, "La sesión no está lista para iniciar")
+            self.title = req.title.strip() or "Reunión"
+            self.model_name, self.language = req.model, req.language
+            self.failure_text = ""
+            self.output_folder = output_dir()
+            self.session_id = uuid.uuid4().hex
+            self.status("starting", "Iniciando…")
+            self.running = True
+            self.worker = threading.Thread(target=self.start, args=(req,), daemon=True)
+            self.worker.start()
+        return self.snapshot()
+
+    def new_session(self):
+        with self.lock:
+            if self.state != "finished":
+                raise HTTPException(409, "Primero termina la sesión actual")
+            self.path = None
+            self.queue = None
+            self.engine = None
+            self.partial_worker = None
+            self.partial_last = {}
+            self.partials_paused_until = 0.0
+            self.session_id = None
+            self.history = []
+            self.title = "Reunión"
+            self.model_name = self.language = None
+            self.status("ready", "Listo para una nueva sesión")
+        return self.snapshot()
+
+    def pause(self):
+        with self.lock:
+            if self.state != "recording":
+                raise HTTPException(409, "Solo se puede pausar mientras se graba")
+            self.active = False
+            self.paused_at = time.time()
+            for label in list(self.captures):
+                self._close_capture(label)
+            self.status("pausing", "Pausando… procesando el audio pendiente")
+        return self.snapshot()
+
+    def resume(self):
+        with self.lock:
+            if self.state != "paused":
+                raise HTTPException(409, "La sesión todavía no está pausada")
+            self.t0 += time.time() - self.paused_at
+            self.paused_at = None
+            self.retired = []
+            try:
+                for label in ("Otros", "Yo"):
+                    if self.sources[label]["enabled"]:
+                        self._open_capture(label)
+                self.active = True
+                self._note("Reanudación")
+                self.status("recording", self.base_status)
+            except Exception as exc:
+                for label in list(self.captures):
+                    self._close_capture(label)
+                self.running = False
+                self.status("finishing", f"Error al reanudar: {exc}. Terminando…")
+        return self.snapshot()
+
     def get_model(self, model_id):
         info = models.resolve(model_id)
         if info is None or info.get("download"):
@@ -140,7 +248,7 @@ class Session:
         pend = self.pending_seconds(current_len)
         if not self.active:
             if pend > 0:
-                broadcast({"type": "status", "text": f"Terminando… quedan ~{pend} s por transcribir"})
+                broadcast({"type": "status", "text": f"{'Pausando' if self.state == 'pausing' else 'Terminando'}… quedan ~{pend} s por transcribir"})
             return
         waiting = self.pending_seconds()  # bloques en cola además del que se está transcribiendo
         if waiting >= 4:
@@ -165,11 +273,11 @@ class Session:
     def _note(self, text):
         if not self.file:
             return
-        ts = time.strftime("%H:%M:%S", time.gmtime(time.time() - self.t0))
+        ts = time.strftime("%H:%M:%S", time.gmtime((self.paused_at or time.time()) - self.t0))
         with self.file_lock:
             self.file.write(f"[{ts}] — {text} —\n")
             self.file.flush()
-        broadcast({"type": "note", "time": ts, "text": text})
+        self.emit({"type": "note", "time": ts, "text": text})
 
     def _open_capture(self, label):
         """Arranca la captura de una fuente con su dispositivo elegido. Devuelve un aviso o None."""
@@ -180,8 +288,12 @@ class Session:
             dev, fell_back = audio.system_loopback(src["id"])
         mn, mx = self.chunk
         cap = audio.SourceCapture(label, dev, self.queue, self.t0, self.level, mn, mx, self.on_partial)
-        cap.start()
         self.captures[label] = cap
+        cap.start()
+        if not cap.ready.wait(5):
+            raise RuntimeError(f"No responde el dispositivo de {label}")
+        if cap.error:
+            raise RuntimeError(f"No se pudo abrir {label}: {cap.error}")
         if fell_back:
             return f"{'micrófono' if label == 'Yo' else 'salida'} elegido no disponible, uso el predeterminado"
         return None
@@ -194,6 +306,8 @@ class Session:
 
     def set_source(self, label, enabled=None, device_id=None):
         with self.lock:
+            if self.state in ("starting", "pausing", "finishing"):
+                raise HTTPException(409, "Espera a que termine la transición")
             src = self.sources[label]
             changed_dev = device_id is not None and device_id != src["id"]
             if device_id is not None:
@@ -221,10 +335,6 @@ class Session:
 
     def start(self, req):
         language, model_name = req.language, req.model
-        with self.lock:
-            if self.running:
-                return
-            self.running = True
         try:
             engine = self.get_model(model_name)
             fixes.reload_if_changed()
@@ -232,11 +342,23 @@ class Session:
             if models.is_english_only(model_name):
                 language = "en"
             with self.lock:
+                if not self.running:
+                    self.status("finished", "Sesión cancelada antes de grabar")
+                    return
                 self.t0 = time.time()
+                self.paused_at = None
                 title = req.title.strip() or "Reunión"
                 slug = re.sub(r'[\\/:*?"<>|]+', "", title).strip()[:60]
-                self.path = OUT_DIR / f"{datetime.now():%Y-%m-%d_%H%M%S} {slug}.txt"
-                self.file = open(self.path, "a", encoding="utf-8")
+                folder = validate_output(str(self.output_folder))
+                stem = f"{datetime.now():%Y-%m-%d_%H%M%S} {slug}"
+                n = 0
+                while True:
+                    self.path = folder / f"{stem}{f' ({n})' if n else ''}.txt"
+                    try:
+                        self.file = open(self.path, "x", encoding="utf-8")
+                        break
+                    except FileExistsError:
+                        n += 1
                 self.file.write(f"# {title} — {datetime.now():%Y-%m-%d %H:%M}\n\n")
                 self.file.flush()
                 self.queue = audio.new_queue()
@@ -253,20 +375,33 @@ class Session:
             self.partials = {}
             self.engine = engine
             self.lagging = False
-            self.worker = threading.Thread(
-                target=self._work, args=(self.queue, engine, language or None), daemon=True)
-            self.worker.start()
-            threading.Thread(target=self._partials_work, args=(engine, language or None),
-                             daemon=True).start()
+            self.partial_worker = threading.Thread(target=self._partials_work,
+                args=(engine, language or None), daemon=True)
+            self.partial_worker.start()
             self.base_status = (f"Grabando ({engine.name} · {engine.device}) · {len(fixes.rules)} reglas"
                                 + (" · bloques largos, sin texto en vivo" if not engine.live_ok else "")
                                 + (" · " + "; ".join(notes) if notes else ""))
-            broadcast({"type": "status", "text": self.base_status, "running": True})
+            with self.lock:
+                if self.state == "starting":
+                    self.status("recording", self.base_status)
             broadcast(self.sources_state())
+            self._work(self.queue, engine, language or None)
         except Exception as exc:
-            self.running = False
-            self.active = False
-            broadcast({"type": "status", "text": f"Error: {exc}", "running": False})
+            self.failure_text = str(exc)
+            with self.lock:
+                self.running = self.active = False
+                for label in list(self.captures):
+                    self._close_capture(label)
+            for cap in self.retired:
+                cap.join()
+            if self.queue is not None and self.file is not None:
+                self.status("finishing", f"Error: {exc}. Guardando audio pendiente…")
+                self._work(self.queue, engine, language or None)
+            else:
+                if self.file:
+                    self.file.close()
+                    self.file = None
+                self.status("finished", f"Error: {exc}")
 
     def on_partial(self, label, start, chunk):
         if not self.live or time.time() < self.partials_paused_until:
@@ -284,12 +419,17 @@ class Session:
 
     def _partials_work(self, engine, language):
         """Texto provisional: retranscribe la frase en curso sin bloquear a los finales."""
-        while self.active:
+        while self.running:
+            if not self.active:
+                time.sleep(0.05)
+                continue
             with self.partials_cv:
                 if not self.partials:
                     self.partials_cv.wait(timeout=0.5)
                     continue
                 label, (start, chunk) = self.partials.popitem()
+            if not self.active:
+                continue
             if len(chunk) < audio.TARGET_RATE:  # con menos de 1 s Whisper tiende a inventar
                 continue
             if not self.queue.empty() or start <= self.last_final.get(label, -1):
@@ -302,8 +442,8 @@ class Session:
                     continue
             if time.time() - t > 2.0:  # motor lento: pausar el texto en vivo un rato
                 self.partials_paused_until = time.time() + 3
-            if text and start > self.last_final.get(label, -1):
-                broadcast({"type": "partial", "source": label,
+            if self.active and text and start > self.last_final.get(label, -1):
+                self.emit({"type": "partial", "source": label,
                            "time": time.strftime("%H:%M:%S", time.gmtime(start)), "text": text})
 
     @staticmethod
@@ -323,8 +463,14 @@ class Session:
     def _work(self, q, engine, language):
         prompts = {}
         while self.running or not q.empty() or self._alive():
+            with self.lock:
+                if self.state == "pausing" and q.empty() and not self._alive():
+                    # Freeze at capture stop, excluding both drain time and the pause.
+                    self.partials.clear()
+                    self._note("Pausa")
+                    self.status("paused", "En pausa · Reanudar continúa en el mismo archivo")
             try:
-                label, start, chunk = q.get(timeout=0.5)
+                label, start, chunk = q.get(timeout=0.1)
             except Exception:
                 continue
             self.last_final[label] = start
@@ -338,29 +484,42 @@ class Session:
             text = self._drop_overlap(prompts.get(label, ""), text)
             text = fixes.apply(text)
             if not text:
-                broadcast({"type": "partial", "source": label, "text": ""})  # limpia el provisional
+                self.emit({"type": "partial", "source": label, "text": ""})  # limpia el provisional
                 continue
             prompts[label] = text[-200:]
             ts = time.strftime("%H:%M:%S", time.gmtime(start))
+            try:
+                with self.file_lock:
+                    self.file.write(f"[{ts}] [{label}] {text}\n")
+                    self.file.flush()
+            except OSError as exc:
+                self.failure_text = f"Error de escritura; la transcripción puede estar incompleta: {exc}"
+                self.stop()
+            self.emit({"type": "text", "time": ts, "source": label, "text": text})
+        if self.partial_worker and self.partial_worker is not threading.current_thread():
+            self.partial_worker.join()
+        with self.lock:
             with self.file_lock:
-                self.file.write(f"[{ts}] [{label}] {text}\n")
-                self.file.flush()
-            broadcast({"type": "text", "time": ts, "source": label, "text": text})
-        with self.file_lock:
-            self.file.close()
-            self.file = None
-        broadcast({"type": "status", "text": f"Detenido. Guardado en {self.path}", "running": False})
-        broadcast(self.sources_state())
+                try:
+                    self.file.close()
+                except OSError as exc:
+                    self.failure_text = f"Error al cerrar el archivo: {exc}"
+                self.file = None
+            self.partials.clear()
+            self.status("finished", (f"Error: {self.failure_text}. Archivo: {self.path}"
+                        if self.failure_text else f"Finalizada. Guardado en {self.path}"))
+            broadcast(self.sources_state())
 
     def stop(self):
         with self.lock:
-            if not self.running:
-                return
+            if self.state in ("ready", "finished", "finishing"):
+                return self.snapshot()
             for label in list(self.captures):
                 self._close_capture(label)
             self.running = False
             self.active = False
-        broadcast({"type": "status", "text": "Deteniendo… terminando de transcribir lo pendiente"})
+            self.status("finishing", "Terminando… procesando todo el audio pendiente")
+        return self.snapshot()
 
 
 session = Session()
@@ -376,6 +535,7 @@ class StartReq(BaseModel):
 
 
 class SettingsReq(BaseModel):
+    output_dir: str | None = None
     dict_paths: str | None = None
     opacity: float | None = None
     opacity_hover: bool | None = None
@@ -458,15 +618,29 @@ def start_download(key: str):
 
 @app.post("/start")
 def start(req: StartReq):
+    result = session.begin(req)
     settings.save({"language": req.language, "model": req.model})
-    threading.Thread(target=session.start, args=(req,), daemon=True).start()
-    return {"ok": True}
+    return result
 
 
 @app.post("/stop")
 def stop():
-    session.stop()
-    return {"ok": True}
+    return session.stop()
+
+
+@app.post("/pause")
+def pause():
+    return session.pause()
+
+
+@app.post("/resume")
+def resume():
+    return session.resume()
+
+
+@app.post("/new-session")
+def new_session():
+    return session.new_session()
 
 
 @app.post("/pin")
@@ -518,12 +692,18 @@ def devices():
 
 @app.get("/settings")
 def get_settings():
-    return {**settings.load(), **dict_state()}
+    return {**settings.load(), **dict_state(), "effective_output_dir": str(output_dir())}
 
 
 @app.post("/settings")
 def post_settings(req: SettingsReq):
     global fixes
+    if req.output_dir is not None:
+        try:
+            path = validate_output(req.output_dir.strip())
+        except (OSError, ValueError) as exc:
+            raise HTTPException(400, f"No se puede usar esa carpeta: {exc}")
+        settings.save({"output_dir": str(path) if req.output_dir.strip() else ""})
     if req.dict_paths is not None:
         settings.save({"dict_paths": req.dict_paths})
         fixes = corrections.Corrections(req.dict_paths or None)
@@ -536,11 +716,13 @@ def post_settings(req: SettingsReq):
         if req.download_source == "github":
             download.github_only()
     if req.cpu_mode in transcriber.CPU_MODES:
+        if session.state not in ("ready", "finished"):
+            raise HTTPException(409, "Termina la sesión antes de cambiar el uso del procesador")
         settings.save({"cpu_mode": req.cpu_mode})
     if req.live_partials is not None:
         settings.save({"live_partials": req.live_partials})
         session.live = req.live_partials
-    return dict_state()
+    return get_settings()
 
 
 @app.get("/sources")
@@ -602,6 +784,24 @@ def drag():
     return {"ok": True}
 
 
+@app.post("/browse-output")
+def browse_output():
+    if window is None:
+        return {"path": None}
+    import webview
+    res = window.create_file_dialog(webview.FOLDER_DIALOG)
+    return {"path": res[0] if res else None}
+
+
+@app.post("/open-output")
+def open_output():
+    try:
+        os.startfile(output_dir())
+    except OSError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
+
+
 @app.post("/browse-dict")
 def browse_dict():
     if window is None:
@@ -641,7 +841,7 @@ def open_dict():
 
 @app.post("/open")
 def open_file():
-    target = session.path if session.path else OUT_DIR
+    target = session.path if session.path else output_dir()
     os.startfile(target)
     return {"ok": True}
 
@@ -650,8 +850,9 @@ def open_file():
 async def ws(websocket: WebSocket):
     await websocket.accept()
     clients.add(websocket)
-    await websocket.send_json({"type": "status", "running": session.running,
-                               "text": "Grabando…" if session.running else "Listo"})
+    with session.lock:
+        initial = {**session.snapshot(), "history": list(session.history)}
+    await websocket.send_json(initial)
     try:
         while True:
             await websocket.receive_text()

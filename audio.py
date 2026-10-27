@@ -62,12 +62,23 @@ class SourceCapture(threading.Thread):
         self.max_chunk = max_chunk
         self.partial_cb = partial_cb
         self.stop_event = threading.Event()
+        self.ready = threading.Event()
+        self.error = None
 
     def run(self):
+        try:
+            self._record()
+        except Exception as exc:
+            self.error = exc
+        finally:
+            self.ready.set()
+
+    def _record(self):
         buf, buf_start = [], None
         last_partial = 0.0
         frames = int(CAPTURE_RATE * READ_SECONDS)
         with self.device.recorder(samplerate=CAPTURE_RATE) as rec:
+            self.ready.set()
             while not self.stop_event.is_set():
                 block = _to_16k_mono(rec.record(numframes=frames))
                 rms = float(np.sqrt(np.mean(block ** 2))) if len(block) else 0.0
