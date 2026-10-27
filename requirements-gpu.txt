@@ -1,0 +1,4 @@
+# Solo para equipos con GPU NVIDIA, DESPUÉS de instalar requirements.txt:
+#   pip uninstall -y onnxruntime
+#   pip install -r requirements-gpu.txt
+onnxruntime-gpu>=1.20

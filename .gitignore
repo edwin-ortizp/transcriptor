@@ -1,0 +1,9 @@
+# Modelos: se descargan de Hugging Face o se copian a mano (pesan 0,6–1,5 GB)
+modelos/
+# Datos personales y locales de cada equipo
+transcripciones/
+settings.json
+transcriptor.log
+# Python
+__pycache__/
+*.pyc

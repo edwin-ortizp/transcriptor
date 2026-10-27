@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcriptor</title>
+<style>
+  @font-face {
+    font-family: 'Nunito';
+    src: url('/static/fonts/Nunito.ttf') format('truetype');
+    font-weight: 200 1000;
+    font-display: block;
+  }
+  :root {
+    --bg: #1c1f24; --panel: #23272e; --line: #2c3036; --text: #e8eaed; --muted: #8b939e;
+    --accent: #2bb3ff; --yo: #64b5f6; --otros: #ffb74d; --red: #ef5350;
+  }
+  * { box-sizing: border-box; font-family: 'Nunito', system-ui, sans-serif; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-size: 14px; overflow: hidden; }
+  body { display: flex; flex-direction: column; border: 1px solid var(--line); }
+  button { font: inherit; border: 0; cursor: pointer; color: inherit; background: none; }
+  input, select { font: inherit; }
+
+  /* Cabecera */
+  header { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px 8px; cursor: grab; user-select: none; }
+  header button { cursor: pointer; }
+  .grip { color: var(--muted); opacity: .5; font-size: 16px; line-height: 1; padding: 0 2px; }
+  header:hover .grip { opacity: 1; }
+  .drag { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+  .drag { cursor: default; user-select: none; }
+  #title { flex: 1; min-width: 0; font-size: 18px; font-weight: 700; padding: 2px 4px; border-radius: 6px;
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #title[contenteditable="true"] { background: var(--panel); outline: 1px solid var(--accent); cursor: text; user-select: text; text-overflow: clip; }
+  .avatars { display: flex; }
+  .av { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 800;
+        color: #111; border: 2px solid var(--bg); margin-left: -6px; opacity: .35; transition: opacity .2s, box-shadow .2s; }
+  .av.Yo { background: var(--yo); } .av.Otros { background: var(--otros); }
+  .av.on { opacity: 1; } .av.talk { box-shadow: 0 0 0 2px var(--accent); }
+  .tools { display: flex; gap: 2px; }
+  .ic { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+  .ic:hover { background: var(--panel); color: var(--text); }
+  .ic.active { color: var(--accent); background: var(--panel); }
+  #pin { filter: grayscale(1) opacity(.6); font-size: 12px; } #pin.active { filter: none; }
+  .ic.x:hover { background: var(--red); color: #fff; }
+
+  .divider { height: 1px; background: var(--line); margin: 0 14px; }
+
+  /* Cuerpo */
+  main { flex: 1; position: relative; min-height: 0; }
+  #log { position: absolute; inset: 0; overflow-y: auto; padding: 12px 16px 8px; line-height: 1.5; }
+  #log::-webkit-scrollbar { width: 6px; } #log::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .line { margin: 0 0 10px; }
+  .meta { font-size: 11px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  .tag { font-weight: 800; } .Yo .tag { color: var(--yo); } .Otros .tag { color: var(--otros); }
+  .say { color: var(--text); }
+  #listening { color: var(--text); font-weight: 600; margin-top: 4px; }
+  #listening .d { animation: blink 1.4s infinite both; } #listening .d:nth-child(2) { animation-delay: .2s; } #listening .d:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+  #empty { color: var(--muted); text-align: center; margin-top: 40%; font-size: 13px; }
+  .line.partial .say { color: var(--muted); font-style: italic; }
+  .line.partial .say::after { content: '▍'; margin-left: 2px; color: var(--accent); animation: blink 1s infinite; font-style: normal; }
+  .note { font-size: 11px; color: var(--muted); text-align: center; margin: 0 0 10px; font-style: italic; }
+
+  /* Ajustes */
+  #settings { position: absolute; inset: 0; background: var(--bg); overflow-y: auto; padding: 12px 16px;
+              transform: translateY(8px); opacity: 0; pointer-events: none; transition: .18s ease; }
+  #settings.open { transform: none; opacity: 1; pointer-events: auto; }
+  .field { margin-bottom: 14px; }
+  .field > label, .lbl { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+  select, .txt { width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; outline: none; }
+  select:focus, .txt:focus { border-color: var(--accent); }
+  select:disabled { opacity: .5; }
+  [hidden] { display: none !important; }
+  .check { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; cursor: pointer; }
+  .field > label.check { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 400; color: var(--text); margin: 6px 0; }
+  .check input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .row { display: flex; gap: 6px; margin-top: 6px; }
+  .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-weight: 700; font-size: 13px; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .hint.ok { color: #66bb6a; } .hint.err { color: var(--red); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+
+  /* Pie */
+  #status { font-size: 11px; color: var(--muted); padding: 4px 16px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  footer { display: flex; align-items: center; gap: 8px; padding: 8px 14px 14px; position: relative; }
+  .src { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .src button { height: 30px; display: grid; place-items: center; color: var(--muted); }
+  .src .tg { width: 32px; font-size: 15px; position: relative; }
+  .src .dd { width: 20px; font-size: 10px; border-left: 1px solid var(--line); }
+  .src button:hover { background: var(--panel); color: var(--text); }
+  .src.on { border-color: var(--accent); } .src.on .tg { color: var(--accent); }
+  .src:not(.on) .tg::after { content: ''; position: absolute; width: 20px; height: 2px; background: var(--red); transform: rotate(-45deg); border-radius: 1px; }
+  .spacer { flex: 1; }
+  .menu { position: absolute; bottom: 52px; left: 10px; right: 10px; background: var(--panel); border: 1px solid var(--line);
+          border-radius: 10px; padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.45); z-index: 10; max-height: 60vh; overflow-y: auto; }
+  .menu .ttl { font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 4px 8px 6px; }
+  .menu button { display: flex; width: 100%; text-align: left; gap: 8px; padding: 7px 8px; border-radius: 6px; font-size: 13px; }
+  .menu button:hover { background: var(--line); }
+  .menu .ck { width: 14px; color: var(--accent); flex: none; }
+  .wave { display: flex; align-items: center; gap: 3px; height: 26px; }
+  .wave i { width: 3px; height: 4px; background: var(--accent); border-radius: 2px; transition: height .12s ease; }
+  #toggle { display: flex; align-items: center; gap: 6px; padding: 6px 16px; border-radius: 999px; font-weight: 700;
+            border: 1px solid var(--accent); color: var(--accent); }
+  #toggle:hover { background: rgba(43,179,255,.1); }
+  #toggle.on { border-color: var(--red); color: var(--text); }
+  #toggle.on .dot { color: var(--red); }
+  #toggle.on:hover { background: rgba(239,83,80,.12); }
+</style>
+</head>
+<body>
+<header>
+  <span class="grip" title="Arrastra para mover">⠿</span>
+  <div class="drag" id="dragzone">
+    <div id="title" spellcheck="false" title="Arrastra para mover · doble clic para renombrar"></div>
+    <div class="avatars">
+      <div class="av Yo" id="av-Yo" title="Yo (micrófono)">YO</div>
+      <div class="av Otros on" id="av-Otros" title="Otros (audio del PC)">OT</div>
+    </div>
+  </div>
+  <div class="tools">
+    <button class="ic" id="pin" title="Fijar encima">📌</button>
+    <button class="ic" id="gear" title="Ajustes">⚙</button>
+    <button class="ic win" id="min" title="Minimizar">—</button>
+    <button class="ic x win" id="close" title="Cerrar">✕</button>
+  </div>
+</header>
+<div class="divider"></div>
+
+<main>
+  <div id="log">
+    <div id="empty">Pulsa <b>Iniciar</b> para transcribir la reunión.</div>
+    <div id="listening" hidden>Escuchando<span class="d">.</span><span class="d">.</span><span class="d">.</span></div>
+  </div>
+
+  <div id="settings">
+    <div class="field win">
+      <label for="opacity">Transparencia · <span id="opv"></span></label>
+      <input type="range" id="opacity" min="30" max="100" step="5">
+      <label class="check"><input type="checkbox" id="ophover"> Opaca al pasar el mouse</label>
+    </div>
+    <div class="field">
+      <span class="lbl">Transcripción en vivo</span>
+      <label class="check"><input type="checkbox" id="live"> Mostrar texto provisional mientras hablan</label>
+      <div class="hint">Se ve en gris y se reemplaza por la versión final al terminar cada frase.</div>
+    </div>
+    <div class="field">
+      <label for="model">Modelo</label>
+      <select id="model"></select>
+      <div class="row" id="dlRow" hidden><button class="btn" id="dlBtn">Descargar ahora</button></div>
+      <div class="hint" id="modelHint"></div>
+      <div class="hint" id="modelSource"></div>
+    </div>
+    <div class="field" id="cpuField" hidden>
+      <label for="cpumode">Uso del procesador (sin GPU)</label>
+      <select id="cpumode"></select>
+      <div class="hint">Más núcleos = menos atraso, pero el equipo queda con menos margen para otras apps.</div>
+    </div>
+    <div class="field">
+      <label for="lang">Idioma</label>
+      <select id="lang">
+        <option value="es">Español</option>
+        <option value="en">Inglés</option>
+        <option value="">Autodetectar</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="dict">Diccionario de reemplazos</label>
+      <input class="txt" id="dict" spellcheck="false" placeholder="Ruta al .tsv (varios separados por ;)">
+      <div class="row">
+        <button class="btn" id="browse">Examinar…</button>
+        <button class="btn" id="dictSave">Aplicar</button>
+        <button class="btn" id="dictOpen">Editar</button>
+      </div>
+      <div class="hint" id="dictInfo"></div>
+    </div>
+    <div class="field">
+      <span class="lbl">Transcripción</span>
+      <div class="row">
+        <button class="btn" id="copy">Copiar texto</button>
+        <button class="btn" id="open">Abrir .txt</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="status"></div>
+<footer>
+  <div class="wave" id="wave"></div>
+  <div class="src" id="src-Yo">
+    <button class="tg" title="Encender/apagar mi micrófono">🎙</button>
+    <button class="dd" title="Elegir micrófono">▾</button>
+  </div>
+  <div class="src" id="src-Otros">
+    <button class="tg" title="Encender/apagar el audio de la reunión">🔊</button>
+    <button class="dd" title="Elegir salida de audio">▾</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="menu" id="menu" hidden></div>
+  <button id="toggle"><span class="dot">●</span><span id="tlabel">Iniciar</span></button>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const post = (url, body) => fetch(url, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
+}).then(r => r.json());
+let running = false;
+const engines = {};
+const levels = { Yo: 0, Otros: 0 };
+
+// --- Título (doble clic para renombrar) ---
+const defaultTitle = () => 'Reunión · ' + new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+$('title').textContent = defaultTitle();
+const editing = () => $('title').isContentEditable;
+$('title').ondblclick = () => {
+  if (running) return;
+  const t = $('title');
+  t.contentEditable = 'true'; t.focus();
+  document.getSelection().selectAllChildren(t);
+};
+$('title').onkeydown = e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); $('title').blur(); } };
+$('title').onblur = () => {
+  const t = $('title');
+  t.contentEditable = 'false';
+  if (!t.textContent.trim()) t.textContent = defaultTitle();
+};
+
+// --- Arrastre nativo de la ventana ---
+let isWindow = false;
+document.querySelector('header').addEventListener('mousedown', e => {
+  if (!isWindow || e.button !== 0 || editing() || e.detail > 1 || e.target.closest('button')) return;
+  e.preventDefault();
+  post('/drag');
+});
+
+// --- Onda animada ---
+const BARS = 9;
+for (let i = 0; i < BARS; i++) $('wave').append(document.createElement('i'));
+const shape = [.45, .7, .9, 1, .8, 1, .9, .7, .45];
+function animate() {
+  const lvl = Math.min(1, Math.max(levels.Yo, levels.Otros));
+  [...$('wave').children].forEach((b, i) => {
+    const h = running ? 4 + lvl * 22 * shape[i] * (0.55 + Math.random() * 0.45) : 4;
+    b.style.height = h + 'px';
+  });
+  for (const k of ['Yo', 'Otros']) {
+    $('av-' + k).classList.toggle('talk', running && levels[k] > 0.08);
+    levels[k] *= 0.85;
+  }
+  setTimeout(() => requestAnimationFrame(animate), 90);
+}
+animate();
+
+// --- Estado ---
+function syncLang() {
+  const auto = engines[$('model').value] === 'parakeet';
+  $('lang').disabled = running || auto;
+  $('lang').title = auto ? 'Parakeet detecta el idioma automáticamente' : '';
+}
+// --- Fuentes (micrófono y audio de la reunión), cambiables en caliente ---
+let devices = { mics: [], speakers: [] };
+let sources = { Yo: { enabled: false, id: '' }, Otros: { enabled: true, id: '' } };
+function showSources(st) {
+  for (const k of ['Yo', 'Otros']) {
+    if (st[k]) sources[k] = st[k];
+    $('src-' + k).classList.toggle('on', sources[k].enabled);
+    $('av-' + k).classList.toggle('on', sources[k].enabled);
+    const list = k === 'Yo' ? devices.mics : devices.speakers;
+    const dev = list.find(d => d.id === sources[k].id);
+    const name = st[k] && st[k].name || (dev && dev.name) || 'predeterminado';
+    $('src-' + k).title = (k === 'Yo' ? 'Micrófono: ' : 'Audio de la reunión: ') + name
+      + (sources[k].enabled ? '' : ' (apagado)');
+  }
+}
+const setSource = async (source, body) => showSources(await post('/source', { source, ...body }));
+for (const k of ['Yo', 'Otros']) {
+  $('src-' + k).querySelector('.tg').onclick = () => setSource(k, { enabled: !sources[k].enabled });
+  $('src-' + k).querySelector('.dd').onclick = e => { e.stopPropagation(); openMenu(k); };
+}
+function openMenu(k) {
+  const menu = $('menu');
+  if (!menu.hidden && menu.dataset.src === k) return closeMenu();
+  const list = k === 'Yo' ? devices.mics : devices.speakers;
+  const def = k === 'Yo' ? devices.default_mic : devices.default_speaker;
+  const current = list.some(d => d.id === sources[k].id) ? sources[k].id : def;
+  menu.innerHTML = `<div class="ttl">${k === 'Yo' ? 'Micrófono (Yo)' : 'Audio de la reunión (Otros)'}</div>`;
+  list.forEach(d => {
+    const b = document.createElement('button');
+    b.innerHTML = `<span class="ck">${d.id === current ? '✓' : ''}</span>`;
+    b.append(d.name);
+    b.onclick = () => { closeMenu(); setSource(k, { device_id: d.id, enabled: true }); };
+    menu.append(b);
+  });
+  menu.dataset.src = k; menu.hidden = false;
+}
+function closeMenu() { $('menu').hidden = true; }
+document.addEventListener('click', e => { if (!$('menu').contains(e.target)) closeMenu(); });
+
+// --- Transparencia ---
+let opacity = 1, opHover = true;
+const applyOpacity = v => isWindow && post('/opacity', { value: v });
+$('opacity').oninput = () => {
+  opacity = $('opacity').value / 100; $('opv').textContent = $('opacity').value + ' %';
+  applyOpacity(opacity);
+};
+$('opacity').onchange = () => post('/settings', { opacity });
+$('live').onchange = () => post('/settings', { live_partials: $('live').checked });
+$('ophover').onchange = () => { opHover = $('ophover').checked; post('/settings', { opacity_hover: opHover }); };
+document.documentElement.addEventListener('mouseenter', () => { if (opHover && opacity < 1) applyOpacity(1); });
+document.documentElement.addEventListener('mouseleave', () => { if (opacity < 1) applyOpacity(opacity); });
+function setRunning(r) {
+  running = r;
+  $('tlabel').textContent = r ? 'Terminar' : 'Iniciar';
+  $('toggle').classList.toggle('on', r);
+  $('model').disabled = r;
+  $('listening').hidden = !r;
+  syncLang();
+}
+
+// --- Transcripción en vivo ---
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'status') {
+      $('status').textContent = m.text; $('status').title = m.text;
+      if (m.running !== undefined) setRunning(m.running);
+    } else if (m.type === 'download') {
+      $('status').textContent = m.text; $('status').title = m.text;
+      if (m.done || m.error) {
+        downloadingKey = null;
+        $('toggle').disabled = false; $('dlBtn').disabled = false;
+        if (m.done) loadModels(m.select).then(() => { if (startAfterDownload) $('toggle').click(); startAfterDownload = false; });
+        else startAfterDownload = false;
+      }
+    } else if (m.type === 'sources') {
+      showSources(m);
+    } else if (m.type === 'note') {
+      const n = document.createElement('div');
+      n.className = 'note'; n.textContent = `${m.time} · ${m.text}`;
+      $('log').insertBefore(n, $('listening'));
+    } else if (m.type === 'level') {
+      levels[m.source] = Math.max(levels[m.source] || 0, m.value);
+    } else if (m.type === 'partial') {
+      const log = $('log');
+      const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+      let d = $('partial-' + m.source);
+      if (!m.text) { if (d) d.remove(); return; }
+      if (!d) {
+        $('empty').hidden = true;
+        d = document.createElement('div');
+        d.id = 'partial-' + m.source;
+        d.className = 'line partial ' + m.source;
+        d.innerHTML = '<div class="meta"><span class="tag"></span><span class="tm"></span></div><div class="say"></div>';
+        log.insertBefore(d, $('listening'));
+      }
+      d.querySelector('.tag').textContent = m.source;
+      d.querySelector('.tm').textContent = m.time;
+      d.querySelector('.say').textContent = m.text;
+      if (atBottom) log.scrollTop = log.scrollHeight;
+    } else if (m.type === 'text') {
+      const log = $('log');
+      const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+      $('empty').hidden = true;
+      const prev = $('partial-' + m.source);
+      const d = document.createElement('div');
+      d.className = 'line ' + m.source;
+      d.innerHTML = `<div class="meta"><span class="tag">${m.source}</span><span>${m.time}</span></div>`;
+      const say = document.createElement('div');
+      say.className = 'say'; say.textContent = m.text;
+      d.append(say);
+      // si el provisional es de esta misma frase se reemplaza; si ya es de la siguiente, el final va antes
+      if (prev && prev.querySelector('.tm').textContent === m.time) prev.replaceWith(d);
+      else log.insertBefore(d, prev || $('listening'));
+      if (atBottom) log.scrollTop = log.scrollHeight;
+    }
+  };
+  ws.onclose = () => { $('status').textContent = 'Reconectando…'; setTimeout(connect, 1500); };
+}
+
+// --- Controles ---
+// --- Modelos y descargas ---
+let modelInfo = {}, gpu = true, downloadingKey = null, startAfterDownload = false;
+function startDownload(key) {
+  if (downloadingKey) return;
+  downloadingKey = key;
+  $('toggle').disabled = true; $('dlBtn').disabled = true;
+  $('status').textContent = 'Preparando descarga…';
+  post('/download/' + key);
+}
+function syncModel() {
+  const m = modelInfo[$('model').value] || {};
+  $('dlRow').hidden = !m.download;
+  let hint = '';
+  if (m.download) hint = 'Se descarga una sola vez a la carpeta "modelos". También puedes copiar ahí la carpeta de un modelo desde otro equipo.';
+  else if (!gpu && m.turbo) hint = 'Sin GPU usa bloques largos (~15–28 s) y no muestra texto en vivo, para que el procesador alcance.';
+  else if (!gpu && m.engine === 'parakeet') hint = 'Rápido incluso sin GPU, un poco menos preciso que Whisper.';
+  $('modelHint').textContent = hint;
+  $('modelSource').textContent = m.source ? (m.download ? 'Fuente: ' : '') + m.source : '';
+  syncLang();
+}
+$('dlBtn').onclick = () => { const m = modelInfo[$('model').value]; if (m && m.download) startDownload(m.download); };
+async function loadModels(select) {
+  const mres = await fetch('/models').then(r => r.json());
+  gpu = mres.gpu;
+  modelInfo = {};
+  mres.models.forEach(m => { modelInfo[m.id] = m; engines[m.id] = m.engine; });
+  const keep = select || $('model').value;
+  fill($('model'), mres.models, keep, mres.models[0] && mres.models[0].id);
+  syncModel();
+  return mres;
+}
+
+$('toggle').onclick = async () => {
+  if (running) return post('/stop');
+  const m = modelInfo[$('model').value];
+  if (m && m.download) { startAfterDownload = true; return startDownload(m.download); }
+  setRunning(true);
+  $('settings').classList.remove('open'); $('gear').classList.remove('active');
+  $('status').textContent = 'Iniciando…';
+  post('/start', { language: $('lang').value, model: $('model').value, title: $('title').textContent });
+};
+$('gear').onclick = () => $('gear').classList.toggle('active', $('settings').classList.toggle('open'));
+$('pin').onclick = async () => $('pin').classList.toggle('active', (await post('/pin')).pinned);
+$('min').onclick = () => post('/minimize');
+$('close').onclick = async () => {
+  const r = await post('/close');
+  if (r.pending && confirm(`Quedan ~${r.pending} s de audio por transcribir.\n\n¿Cerrar igual? La transcripción se completará en segundo plano antes de salir.`))
+    post('/close', { force: true });
+};
+$('model').onchange = syncModel;
+$('cpumode').onchange = () => post('/settings', { cpu_mode: $('cpumode').value });
+$('copy').onclick = () => navigator.clipboard.writeText(
+  [...document.querySelectorAll('.line:not(.partial)')].map(l => `[${l.querySelector('.meta span:last-child').textContent}] [${l.querySelector('.tag').textContent}] ${l.querySelector('.say').textContent}`).join('\n'));
+$('open').onclick = () => post('/open');
+
+// --- Diccionario ---
+function showDict(s) {
+  $('dict').value = s.dict_paths;
+  const info = $('dictInfo');
+  if (s.missing && s.missing.length) { info.className = 'hint err'; info.textContent = 'No encontrado: ' + s.missing.join(', '); }
+  else { info.className = 'hint ok'; info.textContent = `${s.rules} reglas cargadas`; }
+}
+$('dictSave').onclick = async () => showDict(await post('/settings', { dict_paths: $('dict').value }));
+$('browse').onclick = async () => {
+  const r = await post('/browse-dict');
+  if (r.path) { $('dict').value = r.path; showDict(await post('/settings', { dict_paths: r.path })); }
+};
+$('dictOpen').onclick = () => post('/open-dict');
+
+// --- Carga inicial ---
+function fill(sel, items, selected, fallback) {
+  sel.innerHTML = '';
+  items.forEach(it => sel.add(new Option(it.name || it.label, it.id)));
+  sel.value = items.some(i => i.id === selected) ? selected : fallback;
+}
+Promise.all([
+  fetch('/info').then(r => r.json()),
+  fetch('/settings').then(r => r.json()),
+  fetch('/devices').then(r => r.json()),
+  loadModels(),
+  fetch('/sources').then(r => r.json()),
+]).then(([info, s, dev, mres, src]) => {
+  const list = mres.models;
+  // modelo inicial: el guardado si existe y no es lento; si no, Turbo local, luego Parakeet local
+  const saved = list.find(m => m.id === s.model && !m.download);
+  const pick = (saved && !(saved.slow && !mres.gpu)) ? saved
+    : list.find(m => m.turbo && !m.download) || list.find(m => m.engine === 'parakeet' && !m.download) || list[0];
+  if (pick) { $('model').value = pick.id; syncModel(); }
+  $('cpuField').hidden = mres.gpu;
+  Object.entries(mres.cpu_modes).forEach(([k, v]) => $('cpumode').add(new Option(`${{ ligero: 'Ligero', equilibrado: 'Equilibrado', maximo: 'Máximo' }[k] || k} — ${v}`, k)));
+  $('cpumode').value = s.cpu_mode;
+  isWindow = info.window;
+  if (!isWindow) document.querySelectorAll('#pin, .win, #browse').forEach(el => el.style.display = 'none');
+  $('lang').value = s.language;
+  devices = dev;
+  showSources(src);
+  opacity = s.opacity; opHover = s.opacity_hover;
+  $('opacity').value = Math.round(opacity * 100); $('opv').textContent = $('opacity').value + ' %';
+  $('ophover').checked = opHover;
+  $('live').checked = s.live_partials;
+  showDict(s);
+  syncLang();
+});
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+faster-whisper>=1.1
+soundcard>=0.4.3
+numpy
+fastapi>=0.110
+uvicorn>=0.29
+onnx-asr>=0.7
+onnxruntime>=1.20
+huggingface_hub>=0.23
+pywebview>=5.0
