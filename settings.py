@@ -1,10 +1,18 @@
 """Preferencias persistentes en settings.json (junto a la app)."""
 import json
+import threading
 from pathlib import Path
 
+LOCK = threading.RLock()
 PATH = Path(__file__).parent / "settings.json"
 DEFAULTS = {
     "output_dir": "",
+    "backup_audio": False,
+    "draft_title": "Reunión",
+    "draft_context": "",
+    "template": "meeting",
+    "analysis": {},
+    "insights": {},
     "use_mic": False,
     "mic_id": "",
     "speaker_id": "",
@@ -30,7 +38,10 @@ def load() -> dict:
 
 
 def save(partial: dict) -> dict:
-    data = load()
-    data.update({k: v for k, v in partial.items() if k in DEFAULTS})
-    PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    return data
+    with LOCK:
+        data = load()
+        data.update({k: v for k, v in partial.items() if k in DEFAULTS})
+        temporary = PATH.with_suffix(".tmp")
+        temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(PATH)
+        return data

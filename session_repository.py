@@ -1,0 +1,312 @@
+"""Read sessions independently of the live capture controller."""
+import hashlib
+import json
+import re
+import threading
+from datetime import datetime
+from pathlib import Path
+
+from recording import atomic_json, load_manifest
+
+
+STAMP = re.compile(r'^(\d{4}-\d{2}-\d{2}_\d{6})')
+INVALID = re.compile(r'[\/:*?"<>|\x00-\x1f]+')
+
+
+def file_stem(prefix, title):
+    """Same rule as new recordings: timestamp, hyphen and the meeting title."""
+    slug = ' '.join(INVALID.sub('', title).split()).strip(' .')[:60]
+    return f'{prefix}-{slug}' if slug else prefix
+
+
+def stamp_of(created_at, path):
+    try:
+        moment = datetime.fromisoformat(created_at) if created_at else datetime.fromtimestamp(path.stat().st_mtime)
+    except (ValueError, OSError):
+        moment = datetime.now()
+    return f'{moment:%Y-%m-%d_%H%M%S}'
+
+
+class SessionRepository:
+    def __init__(self, folder, current, index_path):
+        self.folder, self.current, self.index_path = folder, current, Path(index_path)
+        self.paths = {}
+        self.external = []
+        self.lock = threading.RLock()
+        if self.index_path.exists():
+            try:
+                self.external = json.loads(self.index_path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                pass
+
+    def register(self, path, external=False):
+        path = Path(path).resolve()
+        data = self._read(path)
+        with self.lock:
+            old = self.paths.get(data['session_id'])
+            if old and old != path:
+                raise ValueError('Dos archivos tienen el mismo identificador de sesión')
+            self.paths[data['session_id']] = path
+            if external and str(path) not in self.external:
+                self.external.append(str(path))
+                self.index_path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_json(self.index_path, self.external)
+        return self.get(data['session_id'])
+
+    def _read(self, path):
+        with self.lock:
+            from session_edits import recover
+            recover(path)
+            return self._read_file(path)
+
+    def _read_file(self, path):
+        if path.suffix.lower() == '.txt':
+            text = path.read_text(encoding='utf-8-sig')
+            sid = 'txt_' + hashlib.sha256(str(path).casefold().encode()).hexdigest()[:24]
+            history = []
+            for number, line in enumerate(text.splitlines()):
+                if not line.strip() or line.startswith('#'):
+                    continue
+                match = re.match(r'^\[(\d+):(\d\d):(\d\d)\]\s*(?:\[([^]]+)\])?\s*(.*)', line)
+                start = 0
+                source, content = 'Otros', line
+                if match:
+                    h, m, s, source, content = match.groups()
+                    start = int(h) * 3600 + int(m) * 60 + int(s)
+                history.append({'id':f'{sid}_{number}', 'type':'text', 'source':source or 'Nota',
+                                'start':start, 'end':start + 1, 'time':stamp(start), 'text':content})
+            title = text.splitlines()[0].lstrip('# ').split(' — ')[0] if text.startswith('#') else path.stem
+            from session_edits import metadata, sha
+            meta = metadata(path)
+            raw = path.read_bytes()
+            if meta.get('txt_hash') == sha(raw):
+                history = meta.get('history',history)
+                title = meta.get('title',title)
+            elif meta.get('history') and len(meta['history']) == len(history):
+                for old,new in zip(meta['history'],history): new['id'] = old['id']
+            sid = meta.get('session_id', sid)  # kept stable when the file is renamed
+            history = [{**h, 'id':h['id']} for h in history]
+            return {'version':0, 'session_id':sid, 'title':title or path.stem, 'context':'',
+                    'template':'meeting', 'history':history, 'markers':[], 'parts':[],
+                    'duration':max((x['end'] for x in history), default=0), 'backup_enabled':False,
+                    'legacy':True, 'txt_path':str(path), 'created_at':meta.get('date')}
+        data = load_manifest(path)
+        for item in data['history']:
+            if item.get('type') not in ('text', 'note') or not isinstance(item.get('time'), str):
+                raise ValueError('Fragmento de sesión inválido')
+        txt = (path.parent / data['txt']).resolve()
+        if txt.parent != path.parent.parent or txt.suffix.lower() != '.txt':
+            raise ValueError('Referencia TXT inválida')
+        for part in data['parts']:
+            self.audio_path(path, part['file'])
+        return {**data, 'legacy':False, 'txt_path':str(txt), 'archive_path':str(path),
+                'template':data.get('template', 'meeting')}
+
+    @staticmethod
+    def audio_path(manifest, name):
+        root = Path(manifest).parent.resolve()
+        if Path(name).name != name or not name.endswith('.wav'):
+            raise ValueError('Referencia de audio inválida')
+        path = (root / name).resolve()
+        if path.parent != root:
+            raise ValueError('Referencia de audio fuera de la sesión')
+        return path
+
+    def list(self):
+        folder = Path(self.folder())
+        warnings = []
+        candidates = list(folder.glob('*.session/session.json')) + [Path(p) for p in self.external]
+        covered = set()
+        items = {}
+        for path in candidates:
+            try:
+                data = self.register(path)
+                covered.add(Path(data['txt_path']).resolve())
+                items[data['session_id']] = data
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                warnings.append(f'{path.name}: {exc}')
+                # Do not hide a TXT when its manifest cannot be read.
+        for path in folder.glob('*.txt'):
+            if path.resolve() not in covered:
+                try:
+                    data = self.register(path)
+                    items[data['session_id']] = data
+                except (OSError, ValueError) as exc:
+                    warnings.append(f'{path.name}: {exc}')
+        live = self.current()
+        if live and live.get('session_id') and (live.get('state') != 'finished' or live['session_id'] not in items):
+            items[live['session_id']] = {**items.get(live['session_id'], {}), **live}
+        rows = []
+        for sid, item in items.items():
+            analysis = self.analysis(sid) if sid in self.paths else {}
+            rows.append({k:item.get(k) for k in ('session_id','title','duration','date','state','legacy','template')} |
+                        {'analysis_state':analysis.get('state', 'none')})
+        return {'sessions':sorted(rows, key=lambda x:x.get('date') or '', reverse=True), 'warnings':warnings}
+
+    def get(self, sid, include_live=True):
+        live = self.current() if include_live else None
+        with self.lock:
+            path = self.paths.get(sid)
+        if path is None and live and sid == live.get('session_id') and live.get('archive_path'):
+            path = Path(live['archive_path'])
+            with self.lock:
+                self.paths[sid] = path
+        if path is None:
+            raise KeyError('Sesión no encontrada; actualiza el listado')
+        data = self._read(path)
+        if live and live.get('session_id') == sid and live.get('state') != 'finished':
+            data.update(live)
+        data.setdefault('state', 'finished')
+        data['date'] = data.get('created_at') or datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec='seconds')
+        for index, part in enumerate(data['parts']):
+            part['available'] = self.audio_path(path, part['file']).is_file()
+            part['url'] = f'/sessions/{sid}/audio/{index}'
+        return data
+
+    def analysis_path(self, sid):
+        with self.lock:
+            path = self.paths[sid]
+        return path.with_suffix('.analysis.json') if path.suffix.lower() == '.txt' else path.parent / 'analysis.json'
+
+    def analysis(self, sid):
+        # Windows readers must not hold the destination open during replacement.
+        with self.lock:
+            path = self.analysis_path(sid)
+            if not path.exists():
+                return {}
+            try:
+                data = json.loads(path.read_text(encoding='utf-8'))
+                from session_edits import metadata
+                meta = metadata(self.paths[sid])
+                if meta.get('text_edited'):
+                    source = data['result'].get('source_revision') if data.get('result') else data.get('source_revision')
+                    data['stale'] = source != meta.get('text_revision')
+                return data
+            except (OSError, ValueError):
+                return {'state':'error', 'error':'No se pudo leer el análisis guardado'}
+
+    def relocate(self, sid, title, live=None):
+        """Rename the transcript and its companions to '<timestamp>-<title>'. Returns the new path."""
+        with self.lock:
+            path = self.paths.get(sid)
+            if path is None:
+                raise KeyError('Sesión no encontrada; actualiza el listado')
+            data = self._read_file(path)
+            txt = Path(data['txt_path'])
+            found = STAMP.match(txt.stem)
+            prefix = found.group(1) if found else stamp_of(data.get('created_at'), txt)
+            stem = file_stem(prefix, title)
+            if txt.stem == stem or (txt.stem.startswith(stem + ' (') and txt.stem.endswith(')')):
+                return path
+            folder = txt.parent
+            n = 0
+            while True:
+                candidate = f"{stem}{f' ({n})' if n else ''}"
+                if not any((folder / (candidate + ext)).exists() for ext in ('.txt', '.session', '.analysis.json', '.txt.edits')):
+                    break
+                n += 1
+            from session_edits import edit_root
+            if path.suffix.lower() == '.txt':
+                moves = [(txt, folder / f'{candidate}.txt'), (self.analysis_path(sid), folder / f'{candidate}.analysis.json'),
+                         (edit_root(path), folder / f'{candidate}.txt.edits')]
+                if sid.startswith('txt_'):
+                    self._keep_legacy_id(path, sid)
+                new_path = folder / f'{candidate}.txt'
+            else:
+                moves = [(txt, folder / f'{candidate}.txt'), (path.parent, folder / f'{candidate}.session')]
+                new_path = folder / f'{candidate}.session' / path.name
+            done = []
+            try:
+                for source, target in moves:
+                    if source.exists():
+                        source.rename(target)
+                        done.append((source, target))
+                if path.suffix.lower() != '.txt':
+                    manifest = json.loads(new_path.read_text(encoding='utf-8'))
+                    manifest['txt'] = f'../{candidate}.txt'
+                    atomic_json(new_path, manifest)
+            except OSError:
+                for source, target in reversed(done):
+                    try: target.rename(source)
+                    except OSError: pass
+                raise
+            self.paths[sid] = new_path.resolve()
+            if str(path) in self.external:
+                self.external[self.external.index(str(path))] = str(self.paths[sid])
+                atomic_json(self.index_path, self.external)
+            return self.paths[sid]
+
+    def _keep_legacy_id(self, path, sid):
+        from session_edits import edit_root
+        meta_path = edit_root(path) / 'metadata.json'
+        meta = json.loads(meta_path.read_text(encoding='utf-8')) if meta_path.exists() else {'version':1}
+        if meta.get('session_id') != sid:
+            meta['session_id'] = sid
+            meta_path.parent.mkdir(exist_ok=True)
+            atomic_json(meta_path, meta)
+
+    def files(self, sid):
+        """Everything that belongs to a saved session: transcript, folder, analysis and edits."""
+        with self.lock:
+            path = self.paths.get(sid)
+        if path is None:
+            raise KeyError('Sesión no encontrada; actualiza el listado')
+        from session_edits import edit_root
+        if path.suffix.lower() == '.txt':
+            candidates = [path, self.analysis_path(sid), edit_root(path)]
+        else:
+            data = self._read_file(path)
+            candidates = [Path(data['txt_path']), path.parent]
+        return [c for c in candidates if c.exists()]
+
+    def delete(self, sid, remove):
+        """Remove a saved session with `remove(paths)` (the Recycle Bin in the app) and forget it."""
+        with self.lock:
+            paths = self.files(sid)
+            remove(paths)
+            path = self.paths.pop(sid)
+            if str(path) in self.external:
+                self.external.remove(str(path))
+                atomic_json(self.index_path, self.external)
+        return paths
+
+    def save_analysis(self, sid, data):
+        with self.lock:
+            atomic_json(self.analysis_path(sid), data)
+
+    def change_marker(self, sid, marker_id, text):
+        with self.lock:
+            path = self.paths[sid]
+            data = self._read(path)
+            if data['legacy']:
+                raise ValueError('El TXT antiguo es de solo lectura')
+            marker = next((m for m in data['markers'] if m['id'] == marker_id), None)
+            if marker is None:
+                raise KeyError('Marcador no encontrado')
+            if text is None:
+                data['markers'].remove(marker)
+            else:
+                marker['text'] = text
+            for item in data['history']:
+                if item.get('marker_id') == marker_id:
+                    item['text'] = f'Marcador: {text}' if text is not None else 'Marcador eliminado'
+            txt = Path(data['txt_path'])
+            if txt.is_file():
+                with txt.open(encoding='utf-8') as file:
+                    header = file.readline().rstrip('\n')
+                lines = [header + '\n\n']
+                for item in data['history']:
+                    source = f"[{item['source']}] " if item['type'] == 'text' else '— '
+                    lines.append(f"[{item['time']}] {source}{item['text']}\n")
+                temporary = txt.with_suffix('.txt.tmp')
+                temporary.write_text(''.join(lines), encoding='utf-8')
+                temporary.replace(txt)
+            for key in ('legacy','txt_path','archive_path'):
+                data.pop(key, None)
+            atomic_json(path, data)
+        return self.get(sid)
+
+
+def stamp(seconds):
+    seconds = max(0, int(seconds))
+    return f'{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}'

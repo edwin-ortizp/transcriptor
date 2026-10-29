@@ -1,0 +1,633 @@
+{
+ "version": 1,
+ "note": "Reglas base de insights. Las frases se comparan en minúsculas y sin tildes. Los cambios del usuario van en state/insight-rules.user.json.",
+ "bonus": {
+  "id": "base-cifras",
+  "weight": 1,
+  "pattern": "(\\$ ?\\d|\\b\\d+([.,]\\d+)? ?(%|por ciento|millones?|mil|usd|dolares|pesos)\\b)"
+ },
+ "rules": [
+  {
+   "id": "base-decision-0",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "decidimos"
+  },
+  {
+   "id": "base-decision-1",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "decidido"
+  },
+  {
+   "id": "base-decision-2",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "queda aprobado"
+  },
+  {
+   "id": "base-decision-3",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "queda definido"
+  },
+  {
+   "id": "base-decision-4",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "queda acordado"
+  },
+  {
+   "id": "base-decision-5",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "acordamos"
+  },
+  {
+   "id": "base-decision-6",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "vamos con"
+  },
+  {
+   "id": "base-decision-7",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "entonces hacemos"
+  },
+  {
+   "id": "base-decision-8",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "entonces quedamos"
+  },
+  {
+   "id": "base-decision-9",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "nos quedamos con"
+  },
+  {
+   "id": "base-decision-10",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "se aprueba"
+  },
+  {
+   "id": "base-decision-11",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "aprobamos"
+  },
+  {
+   "id": "base-commitment-0",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "yo me encargo"
+  },
+  {
+   "id": "base-commitment-1",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "me encargo"
+  },
+  {
+   "id": "base-commitment-2",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "me comprometo"
+  },
+  {
+   "id": "base-commitment-3",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "te lo envio"
+  },
+  {
+   "id": "base-commitment-4",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "te lo mando"
+  },
+  {
+   "id": "base-commitment-5",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "te lo paso"
+  },
+  {
+   "id": "base-commitment-6",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "lo reviso"
+  },
+  {
+   "id": "base-commitment-7",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "lo preparo"
+  },
+  {
+   "id": "base-commitment-8",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "queda pendiente"
+  },
+  {
+   "id": "base-commitment-9",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "a mas tardar"
+  },
+  {
+   "id": "base-commitment-10",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "fecha limite"
+  },
+  {
+   "id": "base-commitment-dia",
+   "type": "commitment",
+   "weight": 3,
+   "pattern": "\\bpara (el )?(lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana)\\b"
+  },
+  {
+   "id": "base-risk-0",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "el problema es"
+  },
+  {
+   "id": "base-risk-1",
+   "type": "risk",
+   "weight": 1,
+   "phrase": "problema"
+  },
+  {
+   "id": "base-risk-2",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "bloqueado"
+  },
+  {
+   "id": "base-risk-3",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "bloqueados"
+  },
+  {
+   "id": "base-risk-4",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "bloqueo"
+  },
+  {
+   "id": "base-risk-5",
+   "type": "risk",
+   "weight": 1,
+   "phrase": "riesgo"
+  },
+  {
+   "id": "base-risk-6",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "no alcanza"
+  },
+  {
+   "id": "base-risk-7",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "no alcanzamos"
+  },
+  {
+   "id": "base-risk-8",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "urgente"
+  },
+  {
+   "id": "base-risk-9",
+   "type": "risk",
+   "weight": 1,
+   "phrase": "retraso"
+  },
+  {
+   "id": "base-risk-10",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "retrasado"
+  },
+  {
+   "id": "base-risk-11",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "nos preocupa"
+  },
+  {
+   "id": "base-risk-12",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "me preocupa"
+  },
+  {
+   "id": "base-risk-13",
+   "type": "risk",
+   "weight": 1,
+   "phrase": "critico"
+  },
+  {
+   "id": "base-question-signo",
+   "type": "question",
+   "weight": 0,
+   "pattern": "\\?"
+  },
+  {
+   "id": "base-question-0",
+   "type": "question",
+   "weight": 1,
+   "phrase": "no se si"
+  },
+  {
+   "id": "base-question-1",
+   "type": "question",
+   "weight": 1,
+   "phrase": "habria que validar"
+  },
+  {
+   "id": "base-question-2",
+   "type": "question",
+   "weight": 1,
+   "phrase": "habria que revisar"
+  },
+  {
+   "id": "base-question-3",
+   "type": "question",
+   "weight": 1,
+   "phrase": "habria que confirmar"
+  },
+  {
+   "id": "base-question-4",
+   "type": "question",
+   "weight": 1,
+   "phrase": "falta definir"
+  },
+  {
+   "id": "base-question-5",
+   "type": "question",
+   "weight": 1,
+   "phrase": "falta confirmar"
+  },
+  {
+   "id": "base-question-6",
+   "type": "question",
+   "weight": 1,
+   "phrase": "quedo en el aire"
+  },
+  {
+   "id": "base-question-7",
+   "type": "question",
+   "weight": 1,
+   "phrase": "duda"
+  },
+  {
+   "id": "base-decision-quedamos-claros",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "quedamos claros"
+  },
+  {
+   "id": "base-decision-quedamos-en-que",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "quedamos en que"
+  },
+  {
+   "id": "base-decision-estamos-de-acuerdo",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "estamos de acuerdo"
+  },
+  {
+   "id": "base-decision-de-acuerdo-en-que",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "de acuerdo en que"
+  },
+  {
+   "id": "base-decision-la-decision-es",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "la decision es"
+  },
+  {
+   "id": "base-decision-tome-la-decision",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "tome la decision"
+  },
+  {
+   "id": "base-decision-tomamos-la-decision",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "tomamos la decision"
+  },
+  {
+   "id": "base-decision-lo-dejamos-asi",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "lo dejamos asi"
+  },
+  {
+   "id": "base-decision-lo-descartamos",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "lo descartamos"
+  },
+  {
+   "id": "base-decision-hay-que-descartar",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "hay que descartar"
+  },
+  {
+   "id": "base-decision-habiamos-acordado",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "habiamos acordado"
+  },
+  {
+   "id": "base-commitment-tengo-pendiente",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "tengo pendiente"
+  },
+  {
+   "id": "base-commitment-te-escribo",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "te escribo"
+  },
+  {
+   "id": "base-commitment-le-escribo",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "le escribo"
+  },
+  {
+   "id": "base-commitment-les-escribo",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "les escribo"
+  },
+  {
+   "id": "base-commitment-te-confirmo",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "te confirmo"
+  },
+  {
+   "id": "base-commitment-les-confirmo",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "les confirmo"
+  },
+  {
+   "id": "base-commitment-te-aviso",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "te aviso"
+  },
+  {
+   "id": "base-commitment-les-aviso",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "les aviso"
+  },
+  {
+   "id": "base-commitment-agendo",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "agendo"
+  },
+  {
+   "id": "base-commitment-agendamos",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "agendamos"
+  },
+  {
+   "id": "base-commitment-me-hablo-con",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "me hablo con"
+  },
+  {
+   "id": "base-commitment-lo-documento",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "lo documento"
+  },
+  {
+   "id": "base-commitment-yo-lo-documento",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "yo lo documento"
+  },
+  {
+   "id": "base-commitment-toca-accion",
+   "type": "commitment",
+   "weight": 3,
+   "pattern": "\\b(eso |nos |me |te )?toca (arreglar|corregir|cambiar|crear|hacer|definir|ajustar|revisar|documentar|validar)\\w*"
+  },
+  {
+   "id": "base-commitment-hay-que-accion",
+   "type": "commitment",
+   "weight": 3,
+   "pattern": "\\bhay que (definir|crear|cambiar|ajustar|documentar|priorizar|corregir|arreglar|validar|revisar|hablar)\\w*"
+  },
+  {
+   "id": "base-commitment-crear-tarea",
+   "type": "commitment",
+   "weight": 3,
+   "pattern": "\\b(crear|creo|creamos|creare) (la |una |el |un )?(tarea|historia|hallazgo|ticket|spec|epica)\\b"
+  },
+  {
+   "id": "base-risk-dependencia",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "dependencia"
+  },
+  {
+   "id": "base-risk-depende-de",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "depende de"
+  },
+  {
+   "id": "base-risk-fuera-del-alcance",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "fuera del alcance"
+  },
+  {
+   "id": "base-risk-no-esta-incluida",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "no esta incluida"
+  },
+  {
+   "id": "base-risk-no-entra-en-el-alcance",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "no entra en el alcance"
+  },
+  {
+   "id": "base-risk-bug",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "bug"
+  },
+  {
+   "id": "base-risk-falla",
+   "type": "risk",
+   "weight": 1,
+   "phrase": "falla"
+  },
+  {
+   "id": "base-risk-no-funciona",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "no funciona"
+  },
+  {
+   "id": "base-risk-no-esta-funcionando",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "no esta funcionando"
+  },
+  {
+   "id": "base-risk-se-cae",
+   "type": "risk",
+   "weight": 1,
+   "phrase": "se cae"
+  },
+  {
+   "id": "base-risk-impedimento",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "impedimento"
+  },
+  {
+   "id": "base-question-tengo-una-duda",
+   "type": "question",
+   "weight": 2,
+   "phrase": "tengo una duda"
+  },
+  {
+   "id": "base-question-tengo-otra-duda",
+   "type": "question",
+   "weight": 2,
+   "phrase": "tengo otra duda"
+  },
+  {
+   "id": "base-question-la-pregunta-es",
+   "type": "question",
+   "weight": 2,
+   "phrase": "la pregunta es"
+  },
+  {
+   "id": "base-question-no-tengo-claro",
+   "type": "question",
+   "weight": 2,
+   "phrase": "no tengo claro"
+  },
+  {
+   "id": "base-question-no-esta-claro",
+   "type": "question",
+   "weight": 2,
+   "phrase": "no esta claro"
+  },
+  {
+   "id": "base-question-queda-abierto",
+   "type": "question",
+   "weight": 2,
+   "phrase": "queda abierto"
+  },
+  {
+   "id": "base-question-hay-que-preguntar",
+   "type": "question",
+   "weight": 2,
+   "phrase": "hay que preguntar"
+  },
+  {
+   "id": "base-question-preguntarle-a",
+   "type": "question",
+   "weight": 2,
+   "phrase": "preguntarle a"
+  },
+  {
+   "id": "base-question-habria-que-ver",
+   "type": "question",
+   "weight": 2,
+   "phrase": "habria que ver"
+  },
+  {
+   "id": "base-decision-dejamos-claro",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "dejamos claro"
+  },
+  {
+   "id": "base-decision-nos-alineamos",
+   "type": "decision",
+   "weight": 3,
+   "phrase": "nos alineamos"
+  },
+  {
+   "id": "base-commitment-le-insisto",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "le insisto"
+  },
+  {
+   "id": "base-commitment-necesito-que",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "necesito que"
+  },
+  {
+   "id": "base-commitment-necesito-por-favor",
+   "type": "commitment",
+   "weight": 3,
+   "phrase": "necesito por favor"
+  },
+  {
+   "id": "base-commitment-ya-te-digo",
+   "type": "commitment",
+   "weight": 2,
+   "phrase": "ya te digo"
+  },
+  {
+   "id": "base-risk-me-preocupa-que",
+   "type": "risk",
+   "weight": 2,
+   "phrase": "me preocupa que"
+  }
+ ],
+ "exclusions": [
+  "sin problema",
+  "no hay problema",
+  "ningun problema",
+  "no es urgente",
+  "no hay riesgo",
+  "sin duda",
+  "te voy a mostrar",
+  "te comparto pantalla",
+  "comparto pantalla",
+  "no te preocupes",
+  "no se si me",
+  "sin ningun problema",
+  "no creo que haya ningun problema",
+  "no hay ese problema"
+ ]
+}

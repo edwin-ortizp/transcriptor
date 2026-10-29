@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transcriptor · Sesiones</title>
+<link rel="stylesheet" href="/static/manager.css">
+</head>
+<body class="private">
+<header><div class="brand"><span class="brand-icon">◉</span><strong>Transcriptor</strong><span class="muted">/ Sesiones</span></div>
+  <div class="header-actions"><span id="captureState" class="badge">Listo</span><button id="showWidget">Widget</button><button id="showDictionary">Diccionario</button><button id="privacy" aria-pressed="false">Ocultar contenido</button><button id="configure">Configuración</button></div>
+</header>
+<div id="privacyCover"><strong>Contenido oculto</strong><p>La captura y el procesamiento continúan.</p></div>
+<main>
+  <aside>
+    <div class="aside-heading"><h2>Sesiones</h2><button id="refresh" aria-label="Actualizar sesiones">↻</button></div>
+    <input id="search" type="search" placeholder="Buscar por título" aria-label="Buscar sesiones">
+    <div class="aside-actions"><button id="prepare" class="primary">Preparar sesión</button><button id="openSession">Abrir archivo</button></div>
+    <div id="sessionList" aria-label="Sesiones guardadas"></div>
+    <div id="listWarnings" class="hint"></div>
+  </aside>
+  <section id="detail">
+    <div id="empty"><span class="empty-icon">▤</span><h1>Tu espacio de sesiones</h1><p>Selecciona una conversación para consultar su texto, escuchar el audio o revisar el análisis.</p><p class="hint">El widget sigue dedicado a grabar.</p></div>
+    <div id="sessionDetail" hidden>
+      <div class="session-heading"><div><div class="eyebrow">Sesión</div><h1 id="sessionTitle"></h1><button id="renameSession" disabled>Renombrar</button> <button id="deleteSession" class="danger" disabled>Eliminar</button><div id="sessionMeta" class="muted"></div></div><span id="sessionBadge" class="badge"></span></div>
+      <div id="sessionWarning" class="error" role="status" hidden></div>
+      <nav aria-label="Contenido de la sesión"><button data-tab="transcript" class="active">Transcripción</button><button data-tab="markers">Marcadores <span id="markerCount"></span></button><button data-tab="analysis">Análisis</button><button data-tab="suspects">Palabras sospechosas <span id="suspectCount"></span></button></nav>
+      <section id="tab-transcript" class="tab-panel">
+        <div class="panel-toolbar"><span id="audioStatus" class="hint"></span><button id="copyText">Copiar texto</button><button id="reapplyMappings" disabled>Reaplicar mappings</button><button id="restoreTranscript" disabled>Restaurar texto anterior</button></div>
+        <details id="sessionContextBox" hidden><summary>Contexto de esta sesión</summary><p id="sessionContext"></p></details>
+        <section id="playback" hidden><audio id="player" controls preload="metadata"></audio><div class="player-row"><span id="playTime">00:00:00</span><label>Velocidad <select id="rate"><option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.25">1,25×</option><option value="1.5">1,5×</option><option value="2">2×</option></select></label></div><input id="seek" type="range" min="0" value="0" step="0.1" aria-label="Posición en la sesión"></section>
+        <div id="transcript" class="transcript"></div>
+      </section>
+      <section id="tab-markers" class="tab-panel" hidden><p class="hint">Los marcadores señalan el momento de captura, aunque la transcripción lleve atraso.</p><div id="markers"></div></section>
+      <section id="tab-analysis" class="tab-panel" hidden>
+        <div class="analysis-toolbar"><label for="analysisTemplate">Formato</label><select id="analysisTemplate"><option value="meeting">Reunión</option><option value="interview">Entrevista</option><option value="class">Clase</option></select><button id="analyze" class="primary">Analizar</button><button id="continueAnalysis" hidden>Continuar análisis</button></div>
+        <div id="analysisState" class="analysis-state" role="status"></div><div id="analysisMeta" class="hint"></div>
+        <p id="analysisNotice" class="hint">El análisis envía el texto, contexto y marcadores al proveedor configurado. El audio permanece local.</p>
+        <div class="button-row" aria-label="Vista del análisis"><button id="showSynthesis" aria-pressed="true">Síntesis</button><button id="showAnalysisDetails" aria-pressed="false">Detalle por secciones</button></div>
+        <article id="analysisResult"></article><section id="analysisDetails" hidden></section>
+      </section>
+      <section id="tab-suspects" class="tab-panel" hidden>
+        <p class="hint">Términos no reconocidos por español, inglés, glosario propio, vocabulario personal o mappings. No son errores confirmados. La búsqueda es local y solo se ejecuta al pulsar el botón.</p>
+        <div class="review-toolbar"><button id="scanWords" class="primary">Buscar palabras</button><select id="reviewStatus" aria-label="Estado de palabras"><option value="pending">Pendientes</option><option value="reviewed">Revisadas</option></select><input id="reviewSearch" type="search" placeholder="Buscar término…" aria-label="Buscar palabras sospechosas"></div>
+        <div id="reviewState" class="hint" role="status"></div><div id="reviewStale" class="review-warning" hidden>Resultados desactualizados. Pulsa Buscar palabras para comprobar el texto y los vocabularios actuales.</div><div id="reviewError" class="error" role="status"></div>
+        <div id="reviewRows"></div><div class="dictionary-pagination"><button id="reviewPrev">Anterior</button><span id="reviewPage"></span><button id="reviewNext">Siguiente</button></div>
+      </section>
+    </div>
+  </section>
+</main>
+<div id="notice" role="status" hidden></div>
+<dialog id="preparationDialog">
+ <form id="preparationForm">
+  <div class="dialog-heading"><div><div class="eyebrow">Próxima grabación</div><h2>Preparar sesión</h2></div><button type="button" class="close-dialog" aria-label="Cerrar preparación">×</button></div>
+  <div class="dialog-body">
+   <label for="draftTitle">Título</label><input id="draftTitle" maxlength="120" required>
+   <label for="draftContext">Contexto previo</label><textarea id="draftContext" rows="4" placeholder="Tema, nombres propios, siglas…"></textarea><div id="contextHint" class="hint"></div>
+   <div class="form-grid"><div><label for="draftTemplate">Formato de análisis</label><select id="draftTemplate"><option value="meeting">Reunión</option><option value="interview">Entrevista</option><option value="class">Clase</option></select></div><label class="check"><input id="draftBackup" type="checkbox"> Guardar respaldo de audio</label></div>
+   <p class="hint">Se recuerda el formato y la elección de respaldo. El contexto se utiliza una sola vez. Whisper puede utilizarlo; Parakeet lo conserva como referencia.</p>
+   <h3>Fuentes de audio</h3>
+   <label class="check"><input id="useMic" type="checkbox"> Micrófono · Yo</label><select id="micDevice" aria-label="Micrófono"></select>
+   <label class="check"><input id="useOutput" type="checkbox"> Audio del equipo · Otros</label><select id="outputDevice" aria-label="Salida de audio"></select>
+   <div class="button-row"><button id="probeStart" type="button">Probar audio</button><button id="probeStop" type="button">Detener prueba</button></div><div id="probeResults" role="status"></div>
+  </div>
+  <div class="dialog-footer"><span id="preparationError" class="error" role="status"></span><button id="savePreparation" class="primary" type="submit">Guardar preparación</button></div>
+ </form>
+</dialog>
+<dialog id="settingsDialog">
+ <form id="settingsForm">
+  <div class="dialog-heading"><div><div class="eyebrow">Procesamiento posterior</div><h2>Configurar análisis</h2></div><button type="button" class="close-dialog" aria-label="Cerrar configuración">×</button></div>
+  <div class="dialog-body">
+   <p class="hint">Compatible inicialmente con Chat Completions. La API y su consumo se contratan con el proveedor; una suscripción a ChatGPT no incluye este acceso.</p>
+   <label for="baseUrl">URL base</label><input id="baseUrl" type="url" required placeholder="https://api.openai.com/v1">
+   <label for="apiModel">Identificador del modelo</label><input id="apiModel" required autocomplete="off">
+   <label for="apiKey">Clave API</label><input id="apiKey" type="password" autocomplete="new-password" placeholder="Dejar vacía para conservar la clave guardada"><div id="keyState" class="hint"></div>
+   <label class="check"><input id="clearKey" type="checkbox"> Eliminar la clave guardada para esta URL</label>
+   <label class="check consent"><input id="automatic" type="checkbox"> Analizar automáticamente las nuevas sesiones al terminar</label>
+   <p class="hint">Al activarlo autorizas el envío de transcripción, contexto y marcadores al destino indicado. No se analizan automáticamente sesiones anteriores.</p>
+   <details><summary>Límites y tarifas opcionales</summary><div class="form-grid">
+    <div><label for="outputParam">Parámetro de salida del proveedor</label><select id="outputParam"><option value="max_tokens">max_tokens · compatibilidad general</option><option value="max_completion_tokens">max_completion_tokens · OpenAI actual</option></select></div>
+    <div><label for="contextTokens">Ventana de contexto del modelo (tokens)</label><input id="contextTokens" type="number" min="512" max="2000000" required></div>
+    <div><label for="outputTokens">Salida máxima del proveedor (tokens)</label><input id="outputTokens" type="number" min="64" max="128000" required></div>
+    <div><label for="partialTokens">Salida por sección (tokens)</label><input id="partialTokens" type="number" min="32" max="16000" required></div>
+    <div><label for="consolidationTokens">Salida por consolidación (tokens)</label><input id="consolidationTokens" type="number" min="32" max="16000" required></div>
+    <div><label for="finalTokens">Salida de síntesis final (tokens)</label><input id="finalTokens" type="number" min="32" max="128000" required></div>
+    <div><label for="requestsMinute">Solicitudes por minuto</label><input id="requestsMinute" type="number" min="1" max="100000000" placeholder="Sin límite local"></div>
+    <div><label for="tokensMinute">Tokens por minuto (entrada + salida)</label><input id="tokensMinute" type="number" min="1" max="100000000" placeholder="Sin límite local"></div>
+    <div><label for="tokenizerEncoding">Contador de tokens</label><select id="tokenizerEncoding"><option value="conservative">Estimación conservadora UTF-8</option><option value="cl100k_base">cl100k_base · requiere tiktoken</option><option value="o200k_base">o200k_base · requiere tiktoken</option></select></div>
+    <div><label for="chunkChars">Tope adicional de caracteres por sección</label><input id="chunkChars" type="number" min="256" max="100000" required></div>
+    <div><label for="maxCalls">Máximo total de llamadas por trabajo</label><input id="maxCalls" type="number" min="1" max="1000" required></div>
+    <div><label for="timeout">Espera por llamada (segundos)</label><input id="timeout" type="number" min="10" max="600" required></div>
+    <div><label for="inputPrice">USD / millón de tokens de entrada</label><input id="inputPrice" type="number" min="0" step="any" placeholder="Sin estimación monetaria"></div>
+    <div><label for="outputPrice">USD / millón de tokens de salida</label><input id="outputPrice" type="number" min="0" step="any" placeholder="Sin estimación monetaria"></div>
+   </div><p class="hint">Configura los límites reales de tu proveedor. Se reserva un 15 % de margen e incluye instrucciones, contexto y salida. El contador debe ser compatible con el modelo; UTF-8 es una estimación conservadora, no un conteo exacto. Sin tiktoken se puede usar UTF-8 sin descargas. Un límite total bajo puede detener una reunión larga; podrás aumentarlo y continuar.</p></details>
+  </div>
+  <div class="dialog-footer"><span id="settingsState" role="status" class="hint"></span><button type="button" id="testApi">Probar conexión guardada</button><button class="primary" type="submit">Guardar</button></div>
+ </form>
+</dialog>
+<dialog id="dictionaryDialog">
+ <div class="dialog-heading"><div><div class="eyebrow">Vocabulario y preferencias personales</div><h2>Diccionario</h2></div><button class="close-dialog" aria-label="Cerrar diccionario">×</button></div>
+ <div class="dictionary-content">
+  <nav aria-label="Vistas del diccionario"><button data-dictionary-view="system" class="active">Términos del sistema</button><button data-dictionary-view="mappings">Mis mappings</button><button data-dictionary-view="personal">Mis términos</button><button data-dictionary-view="insights">Reglas de insights</button></nav>
+  <section id="dictionarySystem" class="dictionary-panel">
+   <p class="hint">Vocabularios incluidos en la aplicación, de solo lectura. No reemplazan ni traducen palabras. Son entradas de referencia, no una lista exhaustiva de todas las formas derivadas o variantes regionales.</p>
+   <div class="dictionary-toolbar"><label for="termSource">Vocabulario</label><select id="termSource"><option value="es">Español</option><option value="en">Inglés</option><option value="own">Términos propios</option></select><input id="termSearch" type="search" aria-label="Buscar términos del sistema" placeholder="Buscar término…"></div>
+   <div id="termInfo" class="hint" role="status"></div><div id="termError" class="error" role="status"></div>
+   <div class="dictionary-table-wrap"><table><thead><tr><th>Término</th><th>Idioma</th><th>Nota</th></tr></thead><tbody id="termRows"></tbody></table></div>
+   <div class="dictionary-pagination"><button id="termPrev">Anterior</button><span id="termPage"></span><button id="termNext">Siguiente</button></div><div id="termProvenance" class="hint"></div>
+  </section>
+  <section id="dictionaryMappings" class="dictionary-panel" hidden>
+   <p class="hint">Reglas personales para próximas grabaciones. La sesión en curso conserva sus reglas; las anteriores no se modifican.</p>
+   <div id="mappingOrigin" class="hint"></div><div id="mappingFiles" class="mapping-files"></div>
+   <div class="dictionary-toolbar"><input id="mappingSearch" type="search" aria-label="Buscar mappings" placeholder="Buscar origen, destino o archivo…"><button id="reloadMappings">Recargar</button><button id="createPersonal" hidden>Crear / usar archivo personal</button><button id="addMapping" class="primary">Agregar mapping</button></div>
+   <div id="mappingStatus" class="hint" role="status"></div><div id="mappingWarnings" class="hint"></div>
+   <form id="mappingForm" class="mapping-editor" hidden>
+    <h3 id="mappingFormTitle">Agregar mapping</h3>
+    <label for="mappingFile">Archivo de destino</label><select id="mappingFile" required></select>
+    <div class="form-grid"><div><label for="mappingSource">Se reconoce como</label><input id="mappingSource" required autocomplete="off"></div><div><label for="mappingTarget">Corregir por</label><input id="mappingTarget" autocomplete="off"><span id="emptyReplacement" class="hint">Un destino vacío elimina la coincidencia del texto.</span></div>
+    <div><label for="mappingMode">Coincidencia</label><select id="mappingMode"><option value="word">Palabra o frase completa</option><option value="any">Cualquier parte del texto</option></select></div><div><label for="mappingCase">Mayúsculas</label><select id="mappingCase"><option value="nocase">Ignorar mayúsculas y minúsculas</option><option value="case">Distinguir mayúsculas y minúsculas</option></select></div></div>
+    <div id="mappingError" class="error" role="status"></div><div class="button-row"><button id="saveMapping" class="primary" type="submit">Guardar mapping</button><button id="cancelMapping" type="button">Cancelar</button><button id="mappingAsNew" type="button" hidden>Usar borrador como nueva regla</button></div>
+   </form>
+   <div class="dictionary-table-wrap"><table><thead><tr><th>Se reconoce como</th><th>Corregir por</th><th>Coincidencia</th><th>Mayúsculas</th><th>Archivo</th><th>Acciones</th></tr></thead><tbody id="mappingRows"></tbody></table></div>
+   <div class="dictionary-pagination"><button id="mappingPrev">Anterior</button><span id="mappingPage"></span><button id="mappingNext">Siguiente</button></div>
+   <details class="mapping-preview"><summary>Probar texto con las reglas guardadas</summary><label for="mappingTestText">Texto de prueba</label><textarea id="mappingTestText" rows="3"></textarea><div class="button-row"><button id="testMappings" type="button">Aplicar mappings guardados</button></div><div id="mappingTestError" class="error" role="status"></div><pre id="mappingTestResult"></pre></details>
+  </section>
+  <section id="dictionaryPersonal" class="dictionary-panel" hidden>
+    <p class="hint">Palabras o términos que aceptas para todas tus reuniones. No reemplazan texto ni modifican los vocabularios del repo. Se reconocen completos, sin inventar derivados.</p>
+    <div id="personalTermsPath" class="hint"></div>
+    <form id="personalTermForm" class="personal-term-form"><label for="personalTerm">Agregar término personal</label><div class="button-row"><input id="personalTerm" required autocomplete="off" placeholder="Ej.: nombre de un producto o sigla"><button id="savePersonalTerm" class="primary" type="submit">Agregar</button><button id="reloadPersonalTerms" type="button">Recargar</button></div></form>
+    <div id="personalTermsError" class="error" role="status"></div><div id="personalTermsMessage" class="hint" role="status"></div>
+    <input id="personalTermsSearch" type="search" placeholder="Buscar en mis términos…" aria-label="Buscar términos personales">
+    <div class="dictionary-table-wrap"><table><thead><tr><th>Término</th><th>Acciones</th></tr></thead><tbody id="personalTermsRows"></tbody></table></div>
+    <div class="dictionary-pagination"><button id="personalTermsPrev">Anterior</button><span id="personalTermsPage"></span><button id="personalTermsNext">Siguiente</button></div>
+  </section>
+  <section id="dictionaryInsights" class="dictionary-panel" hidden>
+    <p class="hint">Frases que hacen aparecer un insight durante la reunión, sin usar IA. Se comparan en minúsculas y sin tildes, como palabra o frase completa. Las reglas base no se borran: se desactivan o cambian de peso.</p>
+    <div id="insightRulesPath" class="hint"></div>
+    <form id="insightRuleForm" class="personal-term-form"><label for="insightRulePhrase">Agregar regla</label><div class="button-row"><select id="insightRuleType" style="width:150px"><option value="decision">Decisión</option><option value="commitment">Compromiso</option><option value="risk">Riesgo</option><option value="question">Pregunta</option></select><input id="insightRulePhrase" required maxlength="120" autocomplete="off" placeholder="Ej.: lo dejamos así"><select id="insightRuleWeight" style="width:110px" title="Peso"><option value="1">Peso 1</option><option value="2" selected>Peso 2</option><option value="3">Peso 3</option><option value="4">Peso 4</option><option value="5">Peso 5</option></select><button class="primary" type="submit">Agregar</button></div></form>
+    <div id="insightRulesError" class="error" role="status"></div><div id="insightRulesMessage" class="hint" role="status"></div>
+    <div id="insightSuggestionsBox" hidden><h3>Sugerencias de la IA</h3><p class="hint">Momentos que la IA consideró importantes y las reglas locales no detectaron. Escribe la frase clave para convertirlos en regla.</p><div id="insightSuggestions"></div></div>
+    <h3>Reglas</h3>
+    <div class="dictionary-toolbar"><input id="insightRulesSearch" type="search" placeholder="Filtrar reglas…" aria-label="Filtrar reglas de insights"><label class="check"><input type="checkbox" id="insightRulesFlagged"> Solo con muchos falsos positivos</label></div>
+    <div class="dictionary-table-wrap"><table><thead><tr><th>Activa</th><th>Tipo</th><th>Frase</th><th>Peso</th><th>Origen</th><th title="Coincidencias · fijadas · falsos positivos">Uso</th><th>Acciones</th></tr></thead><tbody id="insightRulesRows"></tbody></table></div>
+    <h3>Exclusiones</h3>
+    <p class="hint">Frases que anulan la detección aunque contengan una regla (por ejemplo «no hay problema»).</p>
+    <form id="insightExclusionForm" class="personal-term-form"><div class="button-row"><input id="insightExclusion" required maxlength="120" autocomplete="off" placeholder="Ej.: no hay problema"><button type="submit">Agregar exclusión</button></div></form>
+    <div id="insightExclusions" class="button-row" style="flex-wrap:wrap"></div>
+    <details class="mapping-preview"><summary>Probar las reglas</summary><label for="insightTestText">Frase de prueba</label><textarea id="insightTestText" rows="2"></textarea><div class="button-row"><button id="insightTest" type="button">Probar frase</button><button id="insightReplay" type="button">Probar con las últimas 10 sesiones</button></div><pre id="insightTestResult"></pre></details>
+  </section>
+ </div>
+ <div class="dialog-footer"><span class="hint">Los términos del sistema se mantienen en el repo. Los mappings pertenecen al usuario.</span></div>
+</dialog>
+<dialog id="deleteDialog"><form id="deleteForm">
+ <div class="dialog-heading"><h2>Eliminar reunión</h2><button type="button" class="close-dialog" aria-label="Cerrar eliminación">×</button></div>
+ <div class="dialog-body"><p>¿Eliminar <strong id="deleteTitle"></strong>?</p><p id="deleteMeta" class="hint"></p>
+  <p class="hint">Se enviarán a la <b>Papelera de reciclaje de Windows</b> la transcripción, el audio de respaldo, el análisis y el historial de cambios. Puedes restaurarlos desde allí mientras no la vacíes.</p>
+  <div id="deleteError" class="error" role="status"></div></div>
+ <div class="dialog-footer"><button type="button" id="cancelDelete">Cancelar</button><button id="confirmDelete" class="danger">Eliminar reunión</button></div>
+</form></dialog>
+<dialog id="renameDialog"><form id="renameForm">
+ <div class="dialog-heading"><h2>Renombrar reunión</h2><button type="button" class="close-dialog" aria-label="Cerrar renombrado">×</button></div>
+ <div class="dialog-body"><label for="savedTitle">Título</label><input id="savedTitle" required><p id="savedTitleHint" class="hint">Entre 1 y 120 caracteres. Los archivos y la carpeta se renombran a «fecha_hora-título»; la fecha se conserva.</p><div id="renameError" class="error" role="status"></div></div>
+ <div class="dialog-footer"><button id="reloadRename" type="button">Recargar datos</button><button id="saveRename" class="primary">Guardar título</button></div>
+</form></dialog>
+<dialog id="textEditDialog"><form id="textEditForm">
+ <div class="dialog-heading"><h2 id="textEditHeading">Reaplicar mappings</h2><button type="button" class="close-dialog" aria-label="Cerrar correcciones">×</button></div>
+ <div class="dialog-body"><p id="textEditNotice" class="hint"></p><div id="textEditFiles" class="hint"></div><p id="textEditCount"></p><div id="textEditChanges"></div><div class="dictionary-pagination"><button type="button" id="editPrev">Anterior</button><span id="editPage"></span><button type="button" id="editNext">Siguiente</button></div><div id="textEditError" class="error" role="status"></div></div>
+ <div class="dialog-footer"><button id="recalculateEdit" type="button">Recalcular vista previa</button><button id="confirmTextEdit" class="primary" disabled>Confirmar cambios y guardar respaldo</button></div>
+</form></dialog>
+<script src="/static/manager.js"></script>
+<script src="/static/session-edits.js"></script>
+<script src="/static/session-delete.js"></script>
+<script src="/static/dictionary.js"></script>
+<script src="/static/personal-terms.js"></script>
+<script src="/static/insight-rules.js"></script>
+<script src="/static/review.js"></script>
+</body></html>

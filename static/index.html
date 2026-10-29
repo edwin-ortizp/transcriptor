@@ -46,7 +46,7 @@
   .divider { height: 1px; background: var(--line); margin: 0 14px; }
 
   /* Cuerpo */
-  main { flex: 1; position: relative; min-height: 0; }
+  main { flex: 1; position: relative; min-height: 64px; }
   #log { position: absolute; inset: 0; overflow-y: auto; padding: 12px 16px 8px; line-height: 1.5; }
   #log::-webkit-scrollbar { width: 6px; } #log::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
   .line { margin: 0 0 10px; }
@@ -120,9 +120,44 @@
     footer { gap: 4px; padding-inline: 8px; }
     #toggle { padding: 6px 8px; font-size: 12px; }
   }
+  .playing { background:#2b4050; border-radius:4px; }
+  @media (max-height:420px) { header { padding-top:8px; padding-bottom:6px; } footer { padding-bottom:8px; } }
+  #insightCard { margin:6px 10px 4px; padding:8px 10px; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:6px; background:var(--panel); font-size:13px; }
+  #insightCard[data-type="decision"], #insightCard[data-type="commitment"] { border-left-color:#66bb6a; }
+  #insightCard[data-type="risk"] { border-left-color:var(--red); }
+  #insightCard[data-type="question"] { border-left-color:var(--otros); }
+  #insightCard .ihead { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
+  #insightCard .ihead .spacer { flex:1; }
+  #insightCard button { color:var(--muted); font-size:12px; padding:2px 4px; border-radius:4px; }
+  #insightCard button:hover { color:var(--text); background:var(--line); }
+  #insightType { color:var(--text); font-weight:700; }
+  #insightText { margin:4px 0; line-height:1.35; }
+  #insightRef { color:var(--accent) !important; }
+  #backup { opacity:.35; filter:grayscale(1); position:relative; }
+  #backup.on { opacity:1; filter:none; }
+  #backup.on::after { content:''; position:absolute; right:3px; top:3px; width:6px; height:6px; border-radius:50%; background:#66bb6a; }
+  #backup.failed::after { background:var(--red); }
+  #privacySurface { position:absolute; inset:0; display:grid; place-content:center; text-align:center; color:var(--muted); }
+  body.discreet #privacySurface { display:grid !important; }
+  body.discreet #title, body.discreet .avatars { visibility:hidden; }
+  body.discreet #log, body.discreet #settings, body.discreet #preparation,
+  body.discreet #insightCard, body.discreet #markerList, body.discreet #backupInfo, body.discreet #playback,
+  body.discreet #sessionTools, body.discreet #status, body.discreet .src,
+  body.discreet #mark, body.discreet #wave, body.discreet #menu, body.discreet .tools button:not(#discretion) { display:none !important; }
+  body.discreet #title { pointer-events:none; }
+  body.discreet { width:320px; max-width:100vw; height:64px; display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-rows:62px; position:relative; }
+  body.discreet header { padding:0 6px; gap:5px; min-width:0; }
+  body.discreet .drag, body.discreet main, body.discreet .divider, body.discreet #privacySurface { display:none !important; }
+  body.discreet header::after { content:attr(data-private-state); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; order:1; }
+  body.discreet .tools { order:2; margin-left:auto; }
+  body.discreet footer { padding:0 6px 0 0; gap:5px; align-items:center; }
+  body.discreet footer .spacer { display:none; }
+  body.discreet #toggle { padding:6px; font-size:12px; }
+  body.discreet #finish { padding:6px; font-size:12px; }
+  body.discreet .grip { cursor:grab; }
 </style>
 </head>
-<body>
+<body class="discreet">
 <header>
   <span class="grip" title="Arrastra para mover">⠿</span>
   <div class="drag" id="dragzone">
@@ -133,6 +168,8 @@
     </div>
   </div>
   <div class="tools">
+    <button class="ic" id="sessions" title="Sesiones" aria-label="Abrir sesiones">▤</button>
+    <button class="ic" id="discretion" title="Ocultar contenido" aria-label="Ocultar contenido" aria-pressed="false">◉</button>
     <button class="ic" id="pin" title="Fijar encima">📌</button>
     <button class="ic" id="gear" title="Ajustes">⚙</button>
     <button class="ic win" id="min" title="Minimizar">—</button>
@@ -140,8 +177,23 @@
   </div>
 </header>
 <div class="divider"></div>
+  <section id="insightCard" hidden aria-live="polite">
+    <div class="ihead">
+      <button id="insightMode" title="Cambiar modo de insights">Insights: apagado</button>
+      <span class="spacer"></span>
+      <button id="insightNow">Insight ahora</button>
+      <button id="insightNext" hidden>Siguiente</button>
+    </div>
+    <div id="insightBody" hidden>
+      <div class="ihead"><span id="insightType"></span>·<span id="insightSource"></span><button id="insightRef" hidden></button></div>
+      <div id="insightText"></div>
+      <div class="ihead"><span class="spacer"></span><button id="insightPin">Fijar</button><button id="insightDismiss" title="Ocultar sin afectar las reglas">Descartar</button><button id="insightWrong" title="No debió aparecer">Falso positivo…</button></div>
+      <div class="ihead" id="insightWrongMenu" hidden><span>¿Qué hacemos?</span><span class="spacer"></span><button data-feedback="false_positive">Solo registrar</button><button data-feedback="exclude">Ignorar esta frase</button><button data-feedback="disable_rule">Desactivar la regla</button></div>
+    </div>
+  </section>
 
 <main>
+  <div id="privacySurface" hidden>Contenido oculto<br><span id="privateState"></span></div>
   <div id="log">
     <div id="empty">Pulsa <b>Iniciar</b> para transcribir la reunión.</div>
     <div id="listening" hidden>Escuchando<span class="d">.</span><span class="d">.</span><span class="d">.</span></div>
@@ -186,6 +238,15 @@
       <div class="hint">Más núcleos = menos atraso, pero el equipo queda con menos margen para otras apps.</div>
     </div>
     <div class="field">
+      <label for="insightDefault">Insights en vivo (sesiones nuevas)</label>
+      <select id="insightDefault">
+        <option value="off">Apagado</option>
+        <option value="local">Solo local (sin IA, sin costo)</option>
+        <option value="ai">Local + IA (pocas llamadas, usa el proveedor del análisis)</option>
+      </select>
+      <div class="hint">La IA solo se consulta cuando la detección local encuentra algo relevante, con un tope de llamadas por sesión.</div>
+    </div>
+    <div class="field">
       <label for="lang">Idioma</label>
       <select id="lang">
         <option value="es">Español</option>
@@ -224,6 +285,8 @@
     <button class="tg" title="Encender/apagar el audio de la reunión">🔊</button>
     <button class="dd" title="Elegir salida de audio">▾</button>
   </div>
+  <button class="ic" id="mark" title="Marcar momento" aria-label="Marcar momento" disabled>⚑</button>
+  <button class="ic" id="backup" aria-pressed="false" title="Respaldo de audio">💾</button>
   <div class="spacer"></div>
   <div class="menu" id="menu" hidden></div>
   <button id="finish" class="btn" hidden>Terminar</button>
@@ -381,6 +444,7 @@ function setState(m) {
   $('open').disabled = !m.path;
   $('open').title = m.path || 'Inicia una sesión para crear el archivo';
   syncLang();
+  window.featureStatus?.(m);
 }
 
 // --- Transcripción en vivo ---
@@ -389,14 +453,17 @@ function connect() {
   ws.onmessage = e => {
     handleMessage(JSON.parse(e.data));
   };
-  ws.onclose = () => { $('status').textContent = 'Reconectando…'; setTimeout(connect, 1500); };
+  ws.onclose = () => { window.widgetConnectionLost?.(); $('status').textContent = 'Reconectando…'; setTimeout(connect, 1500); };
 }
 function handleMessage(m) {
+    if (window.featureMessage?.(m)) return;
+    if (m.id && document.querySelector(`[data-event-id="${CSS.escape(m.id)}"]`)) return;
     if (m.session_id !== undefined && m.type !== 'status' && m.session_id !== sessionId) return;
     if (m.type === 'status') {
       if (m.revision !== undefined && m.revision < revision) return;
       if (m.revision !== undefined) revision = m.revision;
-      $('status').textContent = m.text; $('status').title = m.text;
+      const statusText = m.state === 'finished' && m.path ? (m.failure_text ? 'Sesión finalizada con errores · Revisa Sesiones' : 'Sesión guardada · Consulta el resultado en Sesiones') : m.text;
+      $('status').textContent = statusText; $('status').title = statusText;
       setState(m);
       if (m.history) {
         document.querySelectorAll('#log .line, #log .note').forEach(el => el.remove());
@@ -414,8 +481,8 @@ function handleMessage(m) {
       showSources(m);
     } else if (m.type === 'note') {
       const n = document.createElement('div');
-      n.className = 'note'; n.textContent = `${m.time} · ${m.text}`;
-      $('log').insertBefore(n, $('listening'));
+      n.className = 'note'; attachMoment(n, m); n.textContent = `${m.time} · ${m.text}`;
+      insertMoment(n, $('listening'));
     } else if (m.type === 'level') {
       levels[m.source] = Math.max(levels[m.source] || 0, m.value);
     } else if (m.type === 'partial') {
@@ -441,14 +508,17 @@ function handleMessage(m) {
       $('empty').hidden = true;
       const prev = $('partial-' + m.source);
       const d = document.createElement('div');
-      d.className = 'line ' + m.source;
-      d.innerHTML = `<div class="meta"><span class="tag">${m.source}</span><span>${m.time}</span></div>`;
+      d.className = 'line ' + m.source; attachMoment(d, m);
+      const meta = document.createElement('div'); meta.className = 'meta';
+      const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = m.source;
+      const stamp = document.createElement('span'); stamp.textContent = m.time;
+      meta.append(tag, stamp); d.append(meta);
       const say = document.createElement('div');
       say.className = 'say'; say.textContent = m.text;
       d.append(say);
       // si el provisional es de esta misma frase se reemplaza; si ya es de la siguiente, el final va antes
-      if (prev && prev.querySelector('.tm').textContent === m.time) prev.replaceWith(d);
-      else log.insertBefore(d, prev || $('listening'));
+      if (prev && prev.querySelector('.tm').textContent === m.time) prev.remove();
+      insertMoment(d, prev && prev.isConnected ? prev : $('listening'));
       if (atBottom) log.scrollTop = log.scrollHeight;
     }
 }
@@ -599,7 +669,8 @@ Promise.all([
   showOutput(s);
   syncLang();
 });
-connect();
 </script>
+<script src="/static/session.js"></script>
+<script src="/static/insights.js"></script>
 </body>
 </html>

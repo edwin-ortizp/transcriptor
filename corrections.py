@@ -3,6 +3,8 @@ import os
 import re
 from pathlib import Path
 
+from mapping_store import read_document
+
 DEFAULT = Path.home() / "Sync" / "android-apps-backups" / "dictate-keyboard" / "dictate_mappings-tcl.tsv"
 
 
@@ -20,28 +22,29 @@ class Corrections:
         return [str(p) for p in self.paths if not p.is_file()]
 
     def _current_stamp(self):
-        return tuple(p.stat().st_mtime if p.is_file() else None for p in self.paths)
+        return tuple((p.stat().st_mtime_ns, p.stat().st_size) if p.is_file() else None for p in self.paths)
 
     def reload_if_changed(self):
         stamp = self._current_stamp()
         if stamp == self._stamp:
             return
-        self._stamp = stamp
         rules = []
         for p in self.paths:
             if not p.is_file():
                 continue
-            for line in p.read_text(encoding="utf-8").splitlines():
-                if not line.strip() or line.startswith("#"):
-                    continue
-                cols = line.split("\t")
-                if len(cols) < 2 or not cols[0]:
-                    continue
-                mode = cols[2].strip() if len(cols) > 2 and cols[2].strip() else "word"
-                case = cols[3].strip() if len(cols) > 3 and cols[3].strip() else "nocase"
-                rules.append((cols[0], cols[1], mode, case))
+            for item in read_document(p)['rules']:
+                rules.append((item['source'],item['target'],item['mode'],item['case']))
         self.rules = rules
         self._compile()
+        self._stamp = stamp
+
+    def snapshot(self):
+        frozen = object.__new__(Corrections)
+        frozen.paths = list(self.paths)
+        frozen._stamp = self._stamp
+        frozen.rules = list(self.rules)
+        frozen._compile()
+        return frozen
 
     def _compile(self):
         self._patterns = []

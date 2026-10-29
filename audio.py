@@ -51,8 +51,9 @@ class SourceCapture(threading.Thread):
     """Lee una fuente y entrega bloques (label, t_inicio, audio) a una cola."""
 
     def __init__(self, label, device, out_queue, t0, level_cb=None,
-                 min_chunk=MIN_CHUNK, max_chunk=MAX_CHUNK, partial_cb=None):
+                 min_chunk=MIN_CHUNK, max_chunk=MAX_CHUNK, partial_cb=None, raw_cb=None):
         super().__init__(daemon=True)
+        self.raw_cb = raw_cb
         self.label = label
         self.device = device
         self.out = out_queue
@@ -62,6 +63,7 @@ class SourceCapture(threading.Thread):
         self.max_chunk = max_chunk
         self.partial_cb = partial_cb
         self.stop_event = threading.Event()
+        self.stop_at = None
         self.ready = threading.Event()
         self.error = None
 
@@ -78,16 +80,25 @@ class SourceCapture(threading.Thread):
         last_partial = 0.0
         frames = int(CAPTURE_RATE * READ_SECONDS)
         with self.device.recorder(samplerate=CAPTURE_RATE) as rec:
+            next_sample = time.monotonic() - self.t0
             self.ready.set()
             while not self.stop_event.is_set():
                 block = _to_16k_mono(rec.record(numframes=frames))
+                block_start = next_sample
+                if self.stop_at is not None:
+                    block = block[:max(0, round((self.stop_at - block_start) * TARGET_RATE))]
+                if not len(block):
+                    break
+                next_sample += len(block) / TARGET_RATE
+                if self.raw_cb:
+                    self.raw_cb(self.label, block_start, block)
                 rms = float(np.sqrt(np.mean(block ** 2))) if len(block) else 0.0
                 if self.level_cb:
                     self.level_cb(self.label, rms)
                 if buf_start is None:
                     if rms < SILENCE_RMS:
                         continue  # no empezar bloques con silencio puro
-                    buf_start = time.time() - self.t0
+                    buf_start = block_start
                 buf.append(block)
                 dur = sum(len(b) for b in buf) / TARGET_RATE
                 if dur >= self.min_chunk and self._ends_in_pause(buf):
@@ -101,8 +112,8 @@ class SourceCapture(threading.Thread):
                     rest = data[cut:]
                     buf = [rest] if len(rest) else []
                     buf_start = buf_start + cut / TARGET_RATE if len(rest) else None
-                elif self.partial_cb and time.time() - last_partial >= PARTIAL_EVERY:
-                    last_partial = time.time()
+                elif self.partial_cb and time.monotonic() - last_partial >= PARTIAL_EVERY:
+                    last_partial = time.monotonic()
                     self.partial_cb(self.label, buf_start, np.concatenate(buf))
         if buf:
             self.out.put((self.label, buf_start, np.concatenate(buf)))
@@ -118,6 +129,7 @@ class SourceCapture(threading.Thread):
         return float(rms[-tail:].mean()) < threshold
 
     def stop(self):
+        self.stop_at = time.monotonic() - self.t0
         self.stop_event.set()
 
 

@@ -7,3 +7,10 @@ transcriptor.log
 # Python
 __pycache__/
 *.pyc
+
+# Local session registry and durable analysis jobs
+state/
+
+# Personal mapping backups and temporary writes (when a legacy TSV is inside the workspace)
+*.tsv.bak-*
+*.tsv.*.tmp
