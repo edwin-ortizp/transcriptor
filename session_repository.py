@@ -10,7 +10,7 @@ from recording import atomic_json, load_manifest
 
 
 STAMP = re.compile(r'^(\d{4}-\d{2}-\d{2}_\d{6})')
-INVALID = re.compile(r'[\/:*?"<>|\x00-\x1f]+')
+INVALID = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
 
 def file_stem(prefix, title):
@@ -25,6 +25,34 @@ def stamp_of(created_at, path):
     except (ValueError, OSError):
         moment = datetime.now()
     return f'{moment:%Y-%m-%d_%H%M%S}'
+
+
+REFERENCE = re.compile(r'\s*\[\d+:\d{2}:\d{2}\]')
+INSIGHT_NAMES = {'decision':'Decisión', 'commitment':'Compromiso', 'risk':'Riesgo', 'question':'Pregunta'}
+
+
+def analysis_markdown(data, result, questions=()):
+    """Clean Markdown for reuse: no [HH:MM:SS] references, plus the meeting insights and questions."""
+    result = result or {}
+    date = (data.get('created_at') or '')[:16].replace('T', ' ')
+    lines = [f"# {data.get('title') or 'Sesión'}", '']
+    if date:
+        lines += [f'*{date}*', '']
+    if result.get('text'):
+        lines.append(REFERENCE.sub('', result['text']).strip())
+    if questions:
+        lines += ['', '## Preguntas sobre la reunión']
+        for item in questions:
+            lines += ['', f"**{item['question']}**", '', REFERENCE.sub('', item.get('answer', '')).strip()]
+    shown = [i for i in data.get('insights', []) if not i.get('dismissed')]
+    if shown:
+        lines += ['', '## Insights de la reunión', '']
+        lines += [f"- **{INSIGHT_NAMES.get(i.get('type'), i.get('type'))}**{' 📌' if i.get('pinned') else ''}: {i.get('text', '').strip()}"
+                  for i in sorted(shown, key=lambda i:(not i.get('pinned'), i.get('start') or 0))]
+    if result:
+        lines += ['', '---', f"*Análisis generado con {result.get('model', '')} · {(result.get('created_at') or '')[:16].replace('T', ' ')}*"]
+    lines.append('')
+    return '\n'.join(lines)
 
 
 class SessionRepository:
@@ -89,7 +117,7 @@ class SessionRepository:
             return {'version':0, 'session_id':sid, 'title':title or path.stem, 'context':'',
                     'template':'meeting', 'history':history, 'markers':[], 'parts':[],
                     'duration':max((x['end'] for x in history), default=0), 'backup_enabled':False,
-                    'legacy':True, 'txt_path':str(path), 'created_at':meta.get('date')}
+                    'legacy':True, 'txt_path':str(path), 'created_at':meta.get('date'), 'insights':[]}
         data = load_manifest(path)
         for item in data['history']:
             if item.get('type') not in ('text', 'note') or not isinstance(item.get('time'), str):
@@ -99,6 +127,7 @@ class SessionRepository:
             raise ValueError('Referencia TXT inválida')
         for part in data['parts']:
             self.audio_path(path, part['file'])
+        data.setdefault('insights', [])
         return {**data, 'legacy':False, 'txt_path':str(txt), 'archive_path':str(path),
                 'template':data.get('template', 'meeting')}
 
@@ -202,18 +231,20 @@ class SessionRepository:
             n = 0
             while True:
                 candidate = f"{stem}{f' ({n})' if n else ''}"
-                if not any((folder / (candidate + ext)).exists() for ext in ('.txt', '.session', '.analysis.json', '.txt.edits')):
+                if not any((folder / (candidate + ext)).exists() for ext in ('.txt', '.session', '.analysis.json', '.analysis.md', '.txt.edits')):
                     break
                 n += 1
             from session_edits import edit_root
             if path.suffix.lower() == '.txt':
                 moves = [(txt, folder / f'{candidate}.txt'), (self.analysis_path(sid), folder / f'{candidate}.analysis.json'),
+                         (self.markdown_path(sid), folder / f'{candidate}.analysis.md'),
                          (edit_root(path), folder / f'{candidate}.txt.edits')]
                 if sid.startswith('txt_'):
                     self._keep_legacy_id(path, sid)
                 new_path = folder / f'{candidate}.txt'
             else:
-                moves = [(txt, folder / f'{candidate}.txt'), (path.parent, folder / f'{candidate}.session')]
+                moves = [(txt, folder / f'{candidate}.txt'), (self.markdown_path(sid), folder / f'{candidate}.analysis.md'),
+                         (path.parent, folder / f'{candidate}.session')]
                 new_path = folder / f'{candidate}.session' / path.name
             done = []
             try:
@@ -253,10 +284,10 @@ class SessionRepository:
             raise KeyError('Sesión no encontrada; actualiza el listado')
         from session_edits import edit_root
         if path.suffix.lower() == '.txt':
-            candidates = [path, self.analysis_path(sid), edit_root(path)]
+            candidates = [path, self.analysis_path(sid), self.markdown_path(sid), edit_root(path)]
         else:
             data = self._read_file(path)
-            candidates = [Path(data['txt_path']), path.parent]
+            candidates = [Path(data['txt_path']), self.markdown_path(sid), path.parent]
         return [c for c in candidates if c.exists()]
 
     def delete(self, sid, remove):
@@ -270,9 +301,37 @@ class SessionRepository:
                 atomic_json(self.index_path, self.external)
         return paths
 
-    def save_analysis(self, sid, data):
+    def save_analysis(self, sid, data, document=False):
+        """`document` forces rewriting the .md (questions changed); otherwise only a new result does."""
         with self.lock:
+            previous = (self.analysis(sid).get('result') or {}).get('created_at')
             atomic_json(self.analysis_path(sid), data)
+            # Only a new result rewrites the document, so the user's edits survive progress saves.
+            fresh = data.get('result') and (data['result'].get('created_at') != previous or not self.markdown_path(sid).exists())
+            if fresh or (document and (data.get('result') or data.get('questions'))):
+                try:
+                    self.write_markdown(sid)
+                except (OSError, ValueError, KeyError):
+                    pass  # the JSON result is the source of truth; the document is a convenience copy
+
+    def markdown_path(self, sid):
+        """The editable analysis document, next to the transcript in the transcripts folder."""
+        with self.lock:
+            path = self.paths[sid]
+        txt = path if path.suffix.lower() == '.txt' else Path(self._read_file(path)['txt_path'])
+        return txt.with_suffix('.analysis.md')
+
+    def write_markdown(self, sid):
+        with self.lock:
+            saved = self.analysis(sid)
+            if not saved.get('result') and not saved.get('questions'):
+                raise KeyError('Esta sesión todavía no tiene análisis')
+            data = self._read(self.paths[sid])
+            target = self.markdown_path(sid)
+            temporary = target.with_suffix('.md.tmp')
+            temporary.write_text(analysis_markdown(data, saved.get('result'), saved.get('questions') or []), encoding='utf-8')
+            temporary.replace(target)
+            return target
 
     def change_marker(self, sid, marker_id, text):
         with self.lock:

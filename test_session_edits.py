@@ -293,6 +293,44 @@ class SessionEditingTest(unittest.TestCase):
         reopened = SessionRepository(lambda:self.root,lambda:None,self.root/'index.json')
         self.assertIn(sid,[r['session_id'] for r in reopened.list()['sessions']])
 
+    def result(self,stamp='2026-10-28T13:00:00'):
+        return {'state':'completed','result':{'text':'## Compromisos\n- Enviar informe [00:01:05] y revisar [0:02:10]','model':'luna','created_at':stamp}}
+
+    def test_analysis_document_is_clean_markdown_with_insights(self):
+        manifest = json.loads(self.path.read_text(encoding='utf-8'))
+        manifest['insights'] = [{'id':'a','type':'commitment','text':'Le escribo mañana','start':3,'pinned':True,'dismissed':False},
+                                {'id':'b','type':'risk','text':'Ruido','start':4,'pinned':False,'dismissed':True}]
+        self.path.write_text(json.dumps(manifest),encoding='utf-8')
+        self.repo.save_analysis(self.sid,self.result())
+        doc = self.repo.markdown_path(self.sid)
+        self.assertEqual(doc.parent,self.root)
+        self.assertTrue(doc.name.endswith('.analysis.md'))
+        text = doc.read_text(encoding='utf-8')
+        self.assertIn('- Enviar informe y revisar',text)
+        self.assertNotRegex(text,r'\[\d+:\d\d:\d\d\]')
+        self.assertIn('**Compromiso** 📌: Le escribo mañana',text)
+        self.assertNotIn('Ruido',text)
+        self.assertEqual(self.client.get(f'/sessions/{self.sid}/analysis/markdown').json()['text'],text)
+
+    def test_user_edits_to_the_document_survive_until_a_new_result(self):
+        self.repo.save_analysis(self.sid,self.result())
+        doc = self.repo.markdown_path(self.sid)
+        doc.write_text('mis notas',encoding='utf-8')
+        self.repo.save_analysis(self.sid,{**self.result(),'state':'running'})  # progress save, same result
+        self.assertEqual(doc.read_text(encoding='utf-8'),'mis notas')
+        self.repo.save_analysis(self.sid,self.result('2026-10-29T09:00:00'))
+        self.assertNotEqual(doc.read_text(encoding='utf-8'),'mis notas')
+
+    def test_rename_and_delete_include_the_analysis_document(self):
+        self.repo.save_analysis(self.sid,self.result())
+        data = self.api_rename('Con documento')
+        doc = Path(data['txt_path']).with_suffix('.analysis.md')
+        self.assertTrue(doc.is_file())
+        self.assertIn(doc,self.repo.files(self.sid))
+
+    def test_missing_analysis_has_no_document(self):
+        self.assertEqual(self.client.get(f'/sessions/{self.sid}/analysis/markdown').status_code,404)
+
     def test_locked_files_keep_title_change_and_original_names(self):
         original = set(p.name for p in self.root.iterdir())
         with patch('pathlib.Path.rename',side_effect=PermissionError('en uso')):

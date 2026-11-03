@@ -25,7 +25,7 @@ class Desktop:
                                            easy_drag=False, background_color='#1c1f24', js_api=WidgetBridge(self))
         self.manager = webview.create_window('Transcriptor · Sesiones', url + '/manager', width=1100,
                                             height=760, min_size=(760,500), hidden=True,
-                                            background_color='#171b22')
+                                            background_color='#171b22', text_select=True)
         # Event handlers must return a hashable value (bool/None), never the
         # dict returned by the capture API. pywebview collects results in a set.
         self.widget.events.closing += self.close_widget

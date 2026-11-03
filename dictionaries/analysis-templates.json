@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "templates": [
+    {"id": "meeting", "name": "Reunión", "sections": "Resumen, temas, decisiones, compromisos y asuntos pendientes."},
+    {"id": "interview", "name": "Entrevista", "sections": "Temas, preguntas y respuestas relevantes, afirmaciones y puntos por aclarar."},
+    {"id": "class", "name": "Clase", "sections": "Resumen, conceptos, explicaciones, ejemplos y dudas."},
+    {"id": "tasks", "name": "Tareas", "sections": "Solo una lista de tareas o acciones mencionadas. Para cada una: qué hay que hacer, responsable si consta, fecha o plazo si consta y referencia temporal. Agrupa por responsable cuando sea posible. Al final, tareas sin responsable claro."},
+    {"id": "commitments", "name": "Compromisos y decisiones", "sections": "Decisiones tomadas, compromisos asumidos (quién, qué y cuándo si consta) y propuestas que quedaron sin decidir, en secciones separadas. No conviertas una propuesta en un compromiso."}
+  ]
+}

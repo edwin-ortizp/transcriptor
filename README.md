@@ -71,7 +71,41 @@ Las transcripciones se guardan en `transcripciones/AAAA-MM-DD_HHMMSS <título>.t
 
 **Fuentes en el pie, siempre a la mano y cambiables en caliente:** 🎙 enciende/apaga el micrófono (tachado = apagado) y su ▾ elige cuál; 🔊 hace lo mismo con la salida de audio capturada (Otros). Se pueden cambiar en plena grabación sin reiniciar: las horas siguen continuas y el .txt anota el cambio (`[00:12:03] — micrófono: Logitech BRIO —`).
 
-**Ajustes (⚙):** modelo, idioma, transparencia (30–100 %, con opción "opaca al pasar el mouse") y diccionario. Todo se recuerda en `settings.json`; si un dispositivo guardado ya no existe, se usa el predeterminado.
+**Ajustes (⚙):** modelo, idioma, transparencia (30–100 %, con opción "opaca al pasar el mouse") y diccionario. Todo se recuerda en `settings.json`. Una selección explícita nunca cambia al dispositivo predeterminado si desaparece; la opción «Predeterminado de Windows» sí resuelve el predeterminado actual.
+
+## Recuperación y ahorro de recursos
+
+Las fuentes «Yo» y «Otros» se supervisan de forma independiente. Si una captura termina con error, la otra continúa y aparece **Reconectando** en la fuente afectada. Se reintenta el mismo dispositivo después de 1, 2, 5 y luego cada 10 segundos, hasta recuperarlo o hasta pausar, terminar, apagar o cambiar esa fuente. No se abre otra captura mientras la anterior siga cerrándose. Los errores comunicados por el controlador permiten detectar una desconexión; un controlador que entregue ceros sin error no se interpreta automáticamente como desconectado.
+
+Una selección explícita ausente tampoco se sustituye al iniciar. Puedes elegir otro dispositivo desde su flecha; la lista se actualiza al abrirla. **Predeterminado de Windows** permite utilizar el dispositivo que Windows tenga configurado en ese momento. La sesión registra la interrupción y su duración en notas y en `source_gaps` de `session.json`. Ese intervalo es audio **no capturado**, no silencio observado. Si existe respaldo WAV, sus canales mantienen la línea temporal con relleno de ceros: las notas y `source_gaps` distinguen el hueco de un silencio real. El respaldo conserva el audio anterior al fallo y la voz capturada tras recuperarse.
+
+Un error identificado de CUDA/cuDNN/cuBLAS durante la inferencia cambia al mismo modelo en CPU y reintenta una sola vez el bloque final afectado. El resto del proceso permanece en CPU; reiniciar la aplicación permite volver a intentar GPU. Se conservan contexto y mappings, se ajustan los bloques y se desactiva el provisional cuando el motor CPU lo necesita. Los errores ajenos a CUDA no provocan este cambio. Un bloque que tampoco pueda transcribirse en CPU queda señalado con sus tiempos; la aplicación continúa con los siguientes y conserva el respaldo si estaba habilitado.
+
+En ⚙ → **Ahorro de recursos**, ambas opciones están activadas por defecto, incluso en configuraciones anteriores que todavía no tengan estas claves:
+
+- **Detectar voz antes de transcribir:** utiliza Silero ONNX incluido en `faster-whisper`, en CPU y sin descargas adicionales. Solo descarta bloques donde no detecta voz; los demás llegan íntegros al motor. Se aplica al comenzar la próxima sesión, sin recortar el respaldo ni cambiar tiempos. Si el detector falla, se avisa y continúa la transcripción habitual. Whisper no ejecuta un segundo filtro VAD cuando la detección previa funciona; al desactivarla o fallar, conserva su filtro interno anterior. La detección de voz puede equivocarse: se puede desactivar si una muestra de voz o un entorno no funcionan bien.
+- **Liberar modelos tras 10 minutos sin uso:** libera los motores de transcripción entre sesiones, una vez procesado todo el audio. No libera durante una sesión pausada ni durante una carga o inferencia. La próxima sesión muestra **Cargando modelo**. Desactivarla conserva el modelo preparado; no carga uno que ya se hubiera liberado. El detector pequeño de Silero puede permanecer en la caché de la biblioteca.
+
+`GET/POST /settings` incorpora `speech_detection` y `unload_models_when_idle`. `/sources` y los eventos `sources` conservan sus campos anteriores y añaden por fuente `health` (`idle`, `healthy`, `reconnecting` o `disabled`), `error` y `effective_id`.
+
+## Comparar modelos con muestras propias
+
+La herramienta es local e independiente de las sesiones: no abre micrófonos, no carga preferencias ni mappings, no busca conversaciones y no descarga modelos. Elige únicamente archivos de prueba que quieras comparar. El manifiesto de ejemplo está en `tools/benchmark.example.json`; ajusta los IDs a los modelos instalados y las rutas a tus muestras. Cada muestra contiene `audio` y `reference`, o `reference_file` para leer una referencia UTF-8. Las rutas relativas se resuelven desde el manifiesto.
+
+```powershell
+python tools/benchmark_transcription.py C:/pruebas/manifest.json --device cpu --vad both --threads 4 --output C:/pruebas/comparacion-cpu
+python tools/benchmark_transcription.py C:/pruebas/manifest.json --device cuda --vad on --output C:/pruebas/comparacion-cuda
+```
+
+Admite WAV PCM de 16 bits, mono o estéreo, a 16 o 48 kHz; rechaza archivos vacíos, incompletos o de otro formato. Utiliza la misma conversión a mono/16 kHz de la captura. Los bloques de comparación duran hasta 12 segundos en todos los modelos; no reproducen exactamente la segmentación variable de una reunión.
+
+Cada combinación modelo/VAD corre secuencialmente en un proceso nuevo, con una pasada de calentamiento por muestra y tres repeticiones medidas. `auto` elige CUDA si está disponible, pero una vez elegido el dispositivo no permite cambiar silenciosamente a CPU. `cuda` falla expresamente si el motor no puede usarlo. Un proceso dispone de hasta 10 minutos; el error de una combinación no impide ejecutar las demás. La salida termina con código 1 si hubo errores, o 2 si la entrada es inválida.
+
+Genera `.json` y `.csv` sin sobrescribir archivos existentes. Incluye referencia, texto reconocido, WER/CER como proporciones (0 = sin errores), tiempos, factor de tiempo real (RTF = tiempo de inferencia/duración), tiempo de carga y pico RAM del proceso completo, **no VRAM**. El JSON añade los tres textos y tiempos, versiones, PID, modelo, idioma y configuración. El texto principal y sus métricas corresponden a la repetición con tiempo mediano. Normaliza Unicode NFC, mayúsculas, puntuación y símbolos, conservando acentos; CER excluye espacios. Una referencia vacía con texto reconocido tiene tasas indefinidas (`null`) y conserva los conteos de errores.
+
+`--vad on/off/both` compara la detección previa de la aplicación. En Whisper, `off` conserva el VAD interno previo, y el resultado lo identifica con `whisper_internal_vad`; no significa desactivar todos sus filtros. Las mediciones incluyen detección e inferencia, pero excluyen carga y lectura/conversión del WAV. Un corpus representativo debería incluir español conversacional, nombres técnicos, ruido, respuestas breves y referencias revisadas antes de elegir un modelo.
+
+**Validación inicial (2026-11-02):** muestras sintéticas locales generadas con Windows System.Speech, voz Microsoft Helena Desktop (es-ES), PCM mono de 48 kHz. Texto de prueba: «Hola. Esta es una prueba de voz.» y respuesta breve «Sí.». Silero detectó ambas también con amplitud multiplicada por 0,1 y 0,03; silencio digital y ruido gaussiano leve se probaron por separado. Whisper Turbo y Parakeet completaron comparaciones reales en CPU (detección previa on/off) y CUDA (on), en procesos separados y con salidas JSON/CSV. Estas muestras verifican el funcionamiento, no demuestran precisión general en reuniones. Las desconexiones, el fallo CUDA y la concurrencia se comprueban con dobles de prueba; queda pendiente observar desconexión/reconexión y fallo GPU físicos.
 
 ## Diccionarios globales y mappings personales
 
@@ -142,7 +176,7 @@ Medido en el PC de desarrollo forzando CPU (int8):
 | Parakeet TDT v3 | 4 | 14× tiempo real | ~0,8 GB |
 | Parakeet TDT v3 | 2 | 10× tiempo real | ~0,8 GB |
 
-Whisper siempre procesa una ventana de 30 s: en CPU tarda casi lo mismo con 3 s que con 24 s de audio. Por eso, **sin GPU, Whisper usa bloques largos (15–28 s) y no muestra texto en vivo**: así rinde ~2× tiempo real. El texto aparece por bloques, con unos 20–40 s de retraso; si se acumula trabajo, el estado muestra "con atraso" y se recupera en las pausas. Al terminar o cerrar, la app sigue hasta transcribir todo lo pendiente (nunca queda incompleto el .txt).
+Whisper siempre procesa una ventana de 30 s: en CPU tarda casi lo mismo con 3 s que con 24 s de audio. Por eso, **sin GPU, Whisper usa bloques largos (15–28 s) y no muestra texto en vivo**: así rinde ~2× tiempo real. El texto aparece por bloques, con unos 20–40 s de retraso; si se acumula trabajo, el estado muestra "con atraso" y se recupera en las pausas. Al terminar o cerrar, la app sigue hasta transcribir todo lo pendiente; si un bloque falla, lo señala expresamente en las notas.
 
 Un portátil de hace varios años puede ser 2–3× más lento que el PC de las mediciones: con Turbo puede ir justo; sube "Uso del procesador" a Equilibrado o Máximo si se atrasa, o usa Parakeet, que va sobrado.
 

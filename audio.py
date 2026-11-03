@@ -66,6 +66,7 @@ class SourceCapture(threading.Thread):
         self.stop_at = None
         self.ready = threading.Event()
         self.error = None
+        self.last_sample_end = None
 
     def run(self):
         try:
@@ -79,44 +80,47 @@ class SourceCapture(threading.Thread):
         buf, buf_start = [], None
         last_partial = 0.0
         frames = int(CAPTURE_RATE * READ_SECONDS)
-        with self.device.recorder(samplerate=CAPTURE_RATE) as rec:
-            next_sample = time.monotonic() - self.t0
-            self.ready.set()
-            while not self.stop_event.is_set():
-                block = _to_16k_mono(rec.record(numframes=frames))
-                block_start = next_sample
-                if self.stop_at is not None:
-                    block = block[:max(0, round((self.stop_at - block_start) * TARGET_RATE))]
-                if not len(block):
-                    break
-                next_sample += len(block) / TARGET_RATE
-                if self.raw_cb:
-                    self.raw_cb(self.label, block_start, block)
-                rms = float(np.sqrt(np.mean(block ** 2))) if len(block) else 0.0
-                if self.level_cb:
-                    self.level_cb(self.label, rms)
-                if buf_start is None:
-                    if rms < SILENCE_RMS:
-                        continue  # no empezar bloques con silencio puro
-                    buf_start = block_start
-                buf.append(block)
-                dur = sum(len(b) for b in buf) / TARGET_RATE
-                if dur >= self.min_chunk and self._ends_in_pause(buf):
-                    self.out.put((self.label, buf_start, np.concatenate(buf)))
-                    buf, buf_start = [], None
-                elif dur >= self.max_chunk:
-                    # sin pausa clara: cortar en el punto más silencioso reciente, nunca a ciegas
-                    data = np.concatenate(buf)
-                    cut = _quietest_cut(data)
-                    self.out.put((self.label, buf_start, data[:cut]))
-                    rest = data[cut:]
-                    buf = [rest] if len(rest) else []
-                    buf_start = buf_start + cut / TARGET_RATE if len(rest) else None
-                elif self.partial_cb and time.monotonic() - last_partial >= PARTIAL_EVERY:
-                    last_partial = time.monotonic()
-                    self.partial_cb(self.label, buf_start, np.concatenate(buf))
-        if buf:
-            self.out.put((self.label, buf_start, np.concatenate(buf)))
+        try:
+            with self.device.recorder(samplerate=CAPTURE_RATE) as rec:
+                next_sample = time.monotonic() - self.t0
+                self.ready.set()
+                while not self.stop_event.is_set():
+                    block = _to_16k_mono(rec.record(numframes=frames))
+                    block_start = next_sample
+                    if self.stop_at is not None:
+                        block = block[:max(0, round((self.stop_at - block_start) * TARGET_RATE))]
+                    if not len(block):
+                        break
+                    next_sample += len(block) / TARGET_RATE
+                    self.last_sample_end = next_sample
+                    if self.raw_cb:
+                        self.raw_cb(self.label, block_start, block)
+                    rms = float(np.sqrt(np.mean(block ** 2))) if len(block) else 0.0
+                    if self.level_cb:
+                        self.level_cb(self.label, rms)
+                    if buf_start is None:
+                        if rms < SILENCE_RMS:
+                            continue  # no empezar bloques con silencio puro
+                        buf_start = block_start
+                    buf.append(block)
+                    dur = sum(len(b) for b in buf) / TARGET_RATE
+                    if dur >= self.min_chunk and self._ends_in_pause(buf):
+                        self.out.put((self.label, buf_start, np.concatenate(buf)))
+                        buf, buf_start = [], None
+                    elif dur >= self.max_chunk:
+                        # sin pausa clara: cortar en el punto más silencioso reciente, nunca a ciegas
+                        data = np.concatenate(buf)
+                        cut = _quietest_cut(data)
+                        self.out.put((self.label, buf_start, data[:cut]))
+                        rest = data[cut:]
+                        buf = [rest] if len(rest) else []
+                        buf_start = buf_start + cut / TARGET_RATE if len(rest) else None
+                    elif self.partial_cb and time.monotonic() - last_partial >= PARTIAL_EVERY:
+                        last_partial = time.monotonic()
+                        self.partial_cb(self.label, buf_start, np.concatenate(buf))
+        finally:
+            if buf:
+                self.out.put((self.label, buf_start, np.concatenate(buf)))
 
     @staticmethod
     def _ends_in_pause(buf) -> bool:
@@ -143,18 +147,22 @@ def list_devices():
 
 
 def system_loopback(speaker_id=None):
-    """Devuelve (dispositivo, usó_predeterminado). Si el id ya no existe, usa el predeterminado."""
+    """Devuelve (dispositivo, usó_predeterminado). Una selección explícita nunca cambia de dispositivo."""
     ids = {s.id for s in sc.all_speakers()}
     if speaker_id and speaker_id in ids:
         return sc.get_microphone(speaker_id, include_loopback=True), False
-    return sc.get_microphone(sc.default_speaker().id, include_loopback=True), bool(speaker_id)
+    if speaker_id:
+        raise RuntimeError("La salida seleccionada no está disponible")
+    return sc.get_microphone(sc.default_speaker().id, include_loopback=True), False
 
 
 def mic(mic_id=None):
     ids = {m.id for m in sc.all_microphones(include_loopback=False)}
     if mic_id and mic_id in ids:
         return sc.get_microphone(mic_id), False
-    return sc.default_microphone(), bool(mic_id)
+    if mic_id:
+        raise RuntimeError("El micrófono seleccionado no está disponible")
+    return sc.default_microphone(), False
 
 
 def new_queue():

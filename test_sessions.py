@@ -41,7 +41,7 @@ class SessionsTest(unittest.TestCase):
             ('app.audio.mic', lambda *_: (SimpleNamespace(name='Fake mic'), False)),
         ]:
             p = patch(target, value); p.start(); self.addCleanup(p.stop)
-        app.settings.save({'dict_paths':str(self.root / 'empty.tsv')})
+        app.settings.save({'dict_paths':str(self.root / 'empty.tsv'), 'speech_detection':False})
         p = patch.object(app, 'fixes', app.corrections.Corrections(str(self.root / 'empty.tsv'))); p.start(); self.addCleanup(p.stop)
         self.engine = SimpleNamespace(chunk=(1, 2), name='Fake', device='cpu', live_ok=False,
             transcribe=lambda *a, **k: 'Texto simulado.')
@@ -123,12 +123,30 @@ class SessionsTest(unittest.TestCase):
         self.client.post('/stop'); gate.set(); self.wait('finished')
         self.assertIsNone(self.session.file)
 
-    def test_capture_failure_drains_started_sources(self):
+    def test_capture_failure_preserves_other_source_and_drains_on_stop(self):
         self.session.sources['Yo']['enabled'] = True
         with patch('app.audio.mic', side_effect=RuntimeError('Mic unavailable')):
-            self.client.post('/start', json={}); self.wait('finished')
+            self.client.post('/start', json={}); self.wait('recording')
+            self.assertEqual(self.session.sources_state()['Yo']['health'], 'reconnecting')
+            self.assertIn('Otros', self.session.captures)
+            self.client.post('/stop'); self.wait('finished')
         self.assertIsNone(self.session.file)
         self.assertIn('Texto simulado.', self.session.path.read_text(encoding='utf-8'))
+
+    def test_resource_settings_apply_detection_to_next_session(self):
+        self.start()
+        self.assertFalse(self.session.speech_detection)
+        response = self.client.post('/settings', json={'speech_detection':True, 'unload_models_when_idle':False})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['speech_detection'])
+        self.assertFalse(response.json()['unload_models_when_idle'])
+        self.assertFalse(self.session.speech_detection)
+        self.client.post('/stop'); self.wait('finished')
+        self.client.post('/new-session')
+        with patch('app.SpeechDetector.contains_speech', return_value=True):
+            self.start()
+            self.assertTrue(self.session.speech_detection)
+            self.client.post('/stop'); self.wait('finished')
 
     def test_existing_name_never_appended(self):
         from datetime import datetime

@@ -59,8 +59,9 @@ class Budget:
 def instructions(system, sections, stage):
     base = system + '\nEstructura requerida: ' + sections
     if stage == 'extract':
-        return base + ('\nExtrae notas compactas de esta sección, no un informe completo. Prioriza hechos, '
-                       'decisiones, compromisos, dudas y conceptos relevantes. Conserva referencias temporales '
+        # Format-independent on purpose: notes extracted once serve every format and every question.
+        return system + ('\nExtrae notas compactas de esta sección, no un informe completo. Prioriza hechos, '
+                       'decisiones, compromisos, tareas con su responsable y plazo si constan, dudas y conceptos relevantes. Conserva referencias temporales '
                        'y diferencias; omite introducciones y secciones vacías. Ajusta el detalle al límite de salida '
                        'y termina la respuesta completa dentro de él.')
     if stage == 'final':

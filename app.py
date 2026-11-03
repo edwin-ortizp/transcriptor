@@ -27,6 +27,7 @@ import audio
 import recording
 import analysis
 import insights
+import analysis_pipeline
 import trash
 from insight_rules import InsightRules
 from session_repository import SessionRepository, file_stem
@@ -41,6 +42,7 @@ import download
 import models
 import settings
 import transcriber
+from speech_detection import SpeechDetector
 
 BASE = Path(__file__).parent
 OUT_DIR = BASE / "transcripciones"
@@ -99,12 +101,20 @@ def download_source():
 if download_source() == "github":
     download.github_only()
 GPU = (not ARGS.cpu) and transcriber.has_gpu()
+force_cpu_after_failure = False
+
+
+async def maintain_models():
+    while True:
+        await asyncio.sleep(5)
+        await asyncio.to_thread(session.unload_if_idle)
 
 @asynccontextmanager
 async def lifespan(_app):
     global loop, shutting_down
     loop = asyncio.get_running_loop()
     shutting_down = False
+    maintenance = asyncio.create_task(maintain_models())
     try:
         repository.list()
         try:
@@ -114,6 +124,11 @@ async def lifespan(_app):
         yield
     finally:
         shutting_down = True
+        maintenance.cancel()
+        try:
+            await maintenance
+        except asyncio.CancelledError:
+            pass
         try:
             if analysis_queue:
                 analysis_queue.stop()
@@ -220,6 +235,13 @@ class Session:
         self.partials_paused_until = 0.0
         self.partial_last = {}
         self.engine = None
+        self.source_health = {}
+        self.source_gaps = []
+        self.source_monitor = None
+        self.last_model_use = time.monotonic()
+        self.speech_detection = True
+        self.detector = SpeechDetector()
+        self.vad_warning = False
         self.base_status = ""
         self.lagging = False
         prefs = settings.load()
@@ -311,7 +333,7 @@ class Session:
                     "history": list(self.history), "markers": list(self.markers),
                     "insights": self.insights.public() if self.insights else [],
                     "backup_enabled": self.backup_enabled, "backup_error": self.backup_error,
-                    "failure_text": self.failure_text,
+                    "failure_text": self.failure_text, "source_gaps": list(self.source_gaps),
                     "parts": self.backup.manifest() if self.backup else self.saved_parts}
             try:
                 recording.atomic_json(self.archive_path, data)
@@ -343,10 +365,16 @@ class Session:
                 raise HTTPException(400, "No se pudieron leer los mappings; revísalos en Diccionario")
             prefs = settings.load()
             self.context = (req.context if req.context is not None else prefs["draft_context"]).strip()
-            self.template = req.template or prefs["template"]
+            template = req.template or prefs["template"]
+            self.template = template if template in analysis.templates else "meeting"
             self.created_at = datetime.now().isoformat(timespec="seconds")
             self.backup_enabled = req.backup_audio if req.backup_audio is not None else prefs["backup_audio"]
             self.duration = 0.0
+            self.source_gaps = []
+            self.source_health = {}
+            self.speech_detection = prefs["speech_detection"]
+            self.detector = SpeechDetector()
+            self.vad_warning = False
             self.finalized = False
             self.title = req.title.strip() or prefs["draft_title"] or "Reunión"
             self.model_name, self.language = req.model, req.language
@@ -395,7 +423,7 @@ class Session:
                 raise HTTPException(409, "Solo se puede pausar mientras se graba")
             self.active = False
             self.paused_at = time.monotonic()
-            for label in list(self.captures):
+            for label in self.sources:
                 self._close_capture(label)
             self.status("pausing", "Pausando… procesando el audio pendiente")
         return self.snapshot()
@@ -410,7 +438,10 @@ class Session:
             try:
                 for label in ("Otros", "Yo"):
                     if self.sources[label]["enabled"]:
-                        self._open_capture(label)
+                        try:
+                            self._open_capture(label)
+                        except Exception as exc:
+                            self._source_failed(label, exc)
                 self.active = True
                 self._note("Reanudación")
                 self.status("recording", self.base_status)
@@ -426,12 +457,88 @@ class Session:
         if info is None or info.get("download"):
             raise RuntimeError("ese modelo aún no está descargado")
         threads = ARGS.threads or transcriber.cpu_threads(settings.load()["cpu_mode"])
-        key = (model_id, threads)
-        if key not in self.models:
-            self.models = {k: v for k, v in self.models.items() if k[0] != model_id}  # libera la versión anterior
-            broadcast({"type": "status", "text": f"Cargando {info['label']}…"})
-            self.models[key] = transcriber.load_model(info, ARGS.cpu or not GPU, threads)
-        return self.models[key]
+        key = (model_id, threads, ARGS.cpu or not GPU or force_cpu_after_failure)
+        with self.gpu:
+            if key not in self.models:
+                for previous in self.models.values():
+                    transcriber.release_engine(previous)
+                self.models.clear()
+                broadcast({"type": "status", "text": f"Cargando {info['label']}…"})
+                self.models[key] = transcriber.load_model(info, key[2], threads)
+            self.last_model_use = time.monotonic()
+            return self.models[key]
+
+    def unload_if_idle(self, now=None):
+        with self.lock:
+            if (not settings.load()["unload_models_when_idle"] or self.running
+                    or self.state not in ("ready", "finished")
+                    or (self.worker and self.worker.is_alive())
+                    or (self.partial_worker and self.partial_worker.is_alive())
+                    or self._alive() or (self.queue is not None and not self.queue.empty())):
+                return False
+            with self.gpu:
+                if (now if now is not None else time.monotonic()) - self.last_model_use < 600:
+                    return False
+                for engine in self.models.values():
+                    transcriber.release_engine(engine)
+                self.models.clear()
+                self.engine = None
+                return True
+
+    def _infer(self, chunk, language, prompt=None, fast=False):
+        global force_cpu_after_failure
+        with self.gpu:
+            engine = self.engine
+            if engine is None:
+                if not force_cpu_after_failure:
+                    raise RuntimeError("El motor de transcripción no está disponible")
+                if fast:
+                    return ""
+                engine = self._activate_cpu_engine(None)
+            self.last_model_use = time.monotonic()
+            detection = self.detector.contains_speech(chunk) if self.speech_detection else None
+            if self.speech_detection and detection is None and not self.vad_warning:
+                self.vad_warning = True
+                self._note("Detector de voz no disponible; se continúa sin detección previa")
+                broadcast({"type": "status", "text": "Detector de voz no disponible; transcripción habitual"})
+            if detection is False:
+                return ""
+            engine.vad_filter = detection is None
+            try:
+                return engine.transcribe(chunk, language, prompt, fast=True) if fast else engine.transcribe(chunk, language, prompt)
+            except Exception as exc:
+                if engine.device != "cuda" or not transcriber.is_cuda_error(exc):
+                    raise
+                force_cpu_after_failure = True
+                exc.__traceback__ = None  # release native frames before allocating CPU weights
+                transcriber.release_engine(engine)
+                self.models.clear()
+                self.engine = None
+                replacement = self._activate_cpu_engine(detection)
+                # A partial is disposable; the complete final is retried exactly once.
+                if fast:
+                    return ""
+                return replacement.transcribe(chunk, language, prompt, fast=False)
+
+    def _activate_cpu_engine(self, detection):
+        """Caller holds the inference lock. Also retries a previously failed CPU load."""
+        info = models.resolve(self.model_name)
+        if info is None or info.get("download"):
+            raise RuntimeError("El modelo local ya no está disponible para continuar en CPU")
+        threads = ARGS.threads or transcriber.cpu_threads(settings.load()["cpu_mode"])
+        replacement = transcriber.load_model(info, True, threads)
+        replacement.hotwords = self.corrections.hotwords()
+        replacement.vad_filter = detection is None
+        self.engine = replacement
+        self.models[(self.model_name, threads, True)] = replacement
+        self.chunk = replacement.chunk
+        for capture in list(self.captures.values()):
+            capture.min_chunk, capture.max_chunk = self.chunk
+        self.partials.clear()
+        self.base_status = f"Grabando ({replacement.name} · cpu) · GPU no disponible"
+        self._note("Fallo de GPU; se continúa con el mismo modelo en CPU")
+        broadcast({"type": "status", "text": self.base_status})
+        return replacement
 
     def pending_seconds(self, extra=0):
         q = self.queue
@@ -462,10 +569,74 @@ class Session:
             broadcast({"type": "level", "source": label, "value": min(rms * 20, 1.0)})
 
     def sources_state(self):
-        return {"type": "sources", "running": self.active,
-                **{k: {"enabled": v["enabled"], "id": v["id"],
-                       "name": self.captures[k].device.name if k in self.captures else ""}
-                   for k, v in self.sources.items()}}
+        with self.lock:
+            state = {"type": "sources", "running": self.active}
+            for label, source in self.sources.items():
+                capture = self.captures.get(label)
+                health = self.source_health.get(label, {})
+                state[label] = {
+                    "enabled": source["enabled"], "id": source["id"],
+                    "name": capture.device.name if capture else "",
+                    "effective_id": getattr(capture.device, "id", "") if capture else "",
+                    "health": health.get("state", "idle") if source["enabled"] else "disabled",
+                    "error": health.get("error", ""),
+                }
+            return state
+
+    def _source_failed(self, label, error, start=None):
+        health = self.source_health.get(label, {})
+        if health.get("state") != "reconnecting":
+            gap = {"source": label, "start": self.elapsed() if start is None else start, "end": None,
+                   "duration": None, "reason": str(error)}
+            self.source_gaps.append(gap)
+            self._note(f"{label}: captura interrumpida; reconectando el mismo dispositivo")
+            health = {"state": "reconnecting", "attempt": 0,
+                      "next": time.monotonic() + 1, "gap": gap}
+        health["error"] = str(error)
+        self.source_health[label] = health
+        self.persist()
+        broadcast(self.sources_state())
+        self.emit({"type": "partial", "source": label, "text": ""})
+        self.level(label, 0)
+
+    def _end_source_gap(self, label, outcome):
+        health = self.source_health.get(label, {})
+        gap = health.get("gap")
+        if gap and gap["end"] is None:
+            gap["end"] = self.elapsed()
+            gap["duration"] = max(0, gap["end"] - gap["start"])
+            gap["outcome"] = outcome
+            self._note(f"{label}: interrupción de {gap['duration']:.1f} s ({outcome}); audio no capturado")
+
+    def _monitor_sources_once(self, now=None):
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            if not self.active or self.state != "recording":
+                return
+            for label, source in self.sources.items():
+                if not source["enabled"]:
+                    continue
+                cap = self.captures.get(label)
+                if cap and not cap.is_alive():
+                    self.captures.pop(label, None)
+                    self._source_failed(label, cap.error or "La captura terminó inesperadamente", getattr(cap, "last_sample_end", None))
+                health = self.source_health.get(label, {})
+                if label not in self.captures and health.get("state") == "reconnecting" and now >= health["next"]:
+                    try:
+                        self._open_capture(label)
+                        self._end_source_gap(label, "recuperada")
+                        self.source_health[label] = {"state": "healthy", "error": ""}
+                        broadcast(self.sources_state())
+                    except Exception as exc:
+                        health["error"] = str(exc)
+                        health["attempt"] += 1
+                        health["next"] = max(now, time.monotonic()) + (2, 5, 10)[min(health["attempt"] - 1, 2)]
+                        broadcast(self.sources_state())
+
+    def _monitor_sources(self):
+        while self.running:
+            self._monitor_sources_once()
+            time.sleep(0.2)
 
     def _note(self, text, marker_id=None, moment=None):
         if not self.file:
@@ -480,27 +651,46 @@ class Session:
     def _open_capture(self, label):
         """Arranca la captura de una fuente con su dispositivo elegido. Devuelve un aviso o None."""
         src = self.sources[label]
+        for old in self.retired:
+            if old.label == label and old.is_alive():
+                raise RuntimeError(f"{label}: el dispositivo anterior todavía se está cerrando")
         if label == "Yo":
             dev, fell_back = audio.mic(src["id"])
         else:
             dev, fell_back = audio.system_loopback(src["id"])
         mn, mx = self.chunk
-        cap = audio.SourceCapture(label, dev, self.queue, self.t0, self.level, mn, mx, self.on_partial, self._backup_submit)
+        def guard(callback):
+            def deliver(*args):
+                if self.captures.get(label) is cap or (callback == self._backup_submit and cap in self.retired and cap.is_alive()):
+                    callback(*args)
+            return deliver
+        cap = audio.SourceCapture(label, dev, self.queue, self.t0, guard(self.level), mn, mx,
+                                  guard(self.on_partial), guard(self._backup_submit))
         self.captures[label] = cap
         cap.start()
         if not cap.ready.wait(5):
+            cap.stop()
+            self.retired.append(cap)
+            self.captures.pop(label, None)
             raise RuntimeError(f"No responde el dispositivo de {label}")
         if cap.error:
+            cap.stop()
+            self.retired.append(cap)
+            self.captures.pop(label, None)
             raise RuntimeError(f"No se pudo abrir {label}: {cap.error}")
+        if self.source_health.get(label, {}).get("state") != "reconnecting":
+            self.source_health[label] = {"state": "healthy", "error": ""}
         if fell_back:
             return f"{'micrófono' if label == 'Yo' else 'salida'} elegido no disponible, uso el predeterminado"
         return None
 
     def _close_capture(self, label):
         cap = self.captures.pop(label, None)
+        self._end_source_gap(label, "fuente detenida")
+        self.source_health[label] = {"state": "idle", "error": ""}
         if cap:
-            cap.stop()
             self.retired.append(cap)
+            cap.stop()
 
     def set_source(self, label, enabled=None, device_id=None):
         with self.lock:
@@ -517,13 +707,20 @@ class Session:
             else:
                 settings.save({"speaker_id": src["id"]})
             if self.active:
+                if changed_dev or not src["enabled"]:
+                    self._end_source_gap(label, "selección cambiada" if changed_dev else "fuente desactivada")
+                    self.source_health[label] = {"state": "idle", "error": ""}
                 active = label in self.captures
                 if active and (not src["enabled"] or changed_dev):
                     self._close_capture(label)
                     if not src["enabled"]:
                         self._note(f"{'micrófono' if label == 'Yo' else 'audio de la reunión'} apagado")
                 if src["enabled"] and label not in self.captures:
-                    warn = self._open_capture(label)
+                    try:
+                        warn = self._open_capture(label)
+                    except Exception as exc:
+                        self._source_failed(label, exc)
+                        return self.sources_state()
                     name = self.captures[label].device.name
                     self._note(f"{'micrófono' if label == 'Yo' else 'audio de la reunión'}: {name}"
                                + (f" ({warn})" if warn else ""))
@@ -569,7 +766,11 @@ class Session:
                 notes = []
                 for label in ("Otros", "Yo"):
                     if self.sources[label]["enabled"]:
-                        warn = self._open_capture(label)
+                        try:
+                            warn = self._open_capture(label)
+                        except Exception as exc:
+                            self._source_failed(label, exc)
+                            warn = None
                         if warn:
                             notes.append(warn)
                 self.active = True
@@ -587,6 +788,8 @@ class Session:
                 if self.state == "starting":
                     self.status("recording", self.base_status)
             broadcast(self.sources_state())
+            self.source_monitor = threading.Thread(target=self._monitor_sources, daemon=True)
+            self.source_monitor.start()
             self._work(self.queue, engine, language or None)
         except Exception as exc:
             self.failure_text = str(exc)
@@ -610,7 +813,7 @@ class Session:
             return
         if self.engine is None or not self.engine.live_ok:
             return
-        if not GPU:  # en CPU, provisionales más espaciados para no saturar el procesador
+        if self.engine.device == "cpu":  # en CPU, provisionales más espaciados para no saturar el procesador
             now = time.monotonic()
             if now - self.partial_last.get(label, 0) < 1.2:
                 return
@@ -637,11 +840,12 @@ class Session:
             if not self.queue.empty() or start <= self.last_final.get(label, -1):
                 continue  # hay finales pendientes o esta frase ya se cerró
             t = time.monotonic()
-            with self.gpu:
-                try:
-                    text = engine.transcribe(chunk, language, self.context or None, fast=True)
-                except Exception:
-                    continue
+            if self.engine is None or not self.engine.live_ok:
+                continue
+            try:
+                text = self._infer(chunk, language, self.context or None, fast=True)
+            except Exception:
+                continue
             if time.monotonic() - t > 2.0:  # motor lento: pausar el texto en vivo un rato
                 self.partials_paused_until = time.monotonic() + 3
             if self.active and text and start > self.last_final.get(label, -1):
@@ -678,10 +882,12 @@ class Session:
             self.last_final[label] = start
             self._report_backlog(len(chunk))
             try:
-                with self.gpu:
-                    text = engine.transcribe(chunk, language, self.prompt(prompts.get(label)))
+                text = self._infer(chunk, language, self.prompt(prompts.get(label)))
             except Exception as exc:
-                broadcast({"type": "status", "text": f"Error transcribiendo: {exc}"})
+                self.failure_text = f"Hay bloques sin transcribir: {exc}"
+                self._note(f"{label}: bloque no transcrito de {start:.2f} a {start + len(chunk) / audio.TARGET_RATE:.2f} s: {exc}")
+                self.emit({"type": "partial", "source": label, "text": ""})
+                broadcast({"type": "status", "text": self.failure_text})
                 continue
             text = self._drop_overlap(prompts.get(label, ""), text)
             text = self.corrections.apply(text)
@@ -700,6 +906,8 @@ class Session:
                     self.stop()
                 self.emit({"type": "text", "time": ts, "start": start,
                            "end": start + len(chunk) / audio.TARGET_RATE, "source": label, "text": text})
+        if self.source_monitor and self.source_monitor is not threading.current_thread():
+            self.source_monitor.join()
         if self.partial_worker and self.partial_worker is not threading.current_thread():
             self.partial_worker.join()
         with self.lock:
@@ -715,6 +923,7 @@ class Session:
             self.partials.clear()
             self.persist()
             self.finalized = True
+            self.last_model_use = time.monotonic()
             session_finished(self)
             self.status("finished", (f"Error: {self.failure_text}. Archivo: {self.path}"
                         if self.failure_text else f"Finalizada. Guardado en {self.path}"))
@@ -724,7 +933,7 @@ class Session:
         with self.lock:
             if self.state in ("ready", "finished", "finishing"):
                 return self.snapshot()
-            for label in list(self.captures):
+            for label in self.sources:
                 self._close_capture(label)
             self.duration = self.elapsed()
             if self.paused_at is None:
@@ -749,7 +958,7 @@ class StartReq(BaseModel):
     title: str = ""
     context: str | None = Field(default=None, max_length=2000)
     backup_audio: bool | None = None
-    template: Literal["meeting", "interview", "class"] | None = None
+    template: str | None = Field(default=None, max_length=40)
 
 
 class SettingsReq(BaseModel):
@@ -758,6 +967,8 @@ class SettingsReq(BaseModel):
     dict_paths: str | None = None
     opacity: float | None = None
     opacity_hover: bool | None = None
+    speech_detection: bool | None = None
+    unload_models_when_idle: bool | None = None
     live_partials: bool | None = None
     cpu_mode: str | None = None
     download_source: str | None = None
@@ -994,6 +1205,7 @@ def analysis_config():
 
 
 insight_rules = InsightRules(insights.BASE_RULES, BASE / 'state' / 'insight-rules.user.json')
+analysis.templates = analysis.AnalysisTemplates(analysis.templates.base_path, BASE / 'state' / 'analysis-templates.user.json')
 
 
 def insights_config():
@@ -1080,7 +1292,9 @@ def insight_mode(req: InsightModeReq):
 @app.patch('/insights/{insight_id}')
 def insight_update(insight_id: str, req: InsightUpdateReq):
     try:
-        return current_insights().update(insight_id, pinned=req.pinned, dismissed=req.dismissed)
+        item = current_insights().update(insight_id, pinned=req.pinned, dismissed=req.dismissed)
+        session.persist()  # pinned/discarded state is visible later in the manager
+        return item
     except KeyError:
         raise HTTPException(404, 'Insight no encontrado')
 
@@ -1418,7 +1632,7 @@ class PreparationReq(BaseModel):
     title: str = Field(default='Reunión', max_length=120)
     context: str = Field(default='', max_length=2000)
     backup_audio: bool = False
-    template: Literal['meeting','interview','class'] = 'meeting'
+    template: str = Field(default='meeting', max_length=40)
 
 
 @app.get('/preparation')
@@ -1433,6 +1647,8 @@ def save_preparation(req: PreparationReq):
     with session.lock:
         if session.state not in ('ready','finished'):
             raise HTTPException(409, 'La preparación se fija antes de iniciar la grabación')
+        if req.template not in analysis.templates:
+            raise HTTPException(400, 'Formato de análisis desconocido')
         settings.save({'draft_title':req.title.strip() or 'Reunión', 'draft_context':req.context,
                        'backup_audio':req.backup_audio, 'template':req.template})
     broadcast({'type':'preparation', **preparation()})
@@ -1468,7 +1684,7 @@ def get_analysis_settings():
         has_key = bool(credentials.get(config['base_url']))
     except Exception:
         has_key = False
-    return {**config, 'has_key':has_key, 'templates':analysis.TEMPLATES}
+    return {**config, 'has_key':has_key, 'templates':analysis.templates.all()}
 
 
 @app.post('/analysis-settings')
@@ -1511,13 +1727,113 @@ def test_analysis_connection():
 
 
 class AnalyzeReq(BaseModel):
-    template: Literal['meeting','interview','class'] = 'meeting'
+    template: str = Field(default='meeting', max_length=40)
+
+
+class TemplateReq(BaseModel):
+    name: str = Field(default='', max_length=60)
+    sections: str = Field(max_length=2000)
+
+
+def template_listing():
+    return {'templates':analysis.templates.all(), 'system':analysis.SYSTEM,
+            'stages':{stage:analysis_pipeline.instructions('', '{formato}', stage).strip() for stage in ('extract','consolidate','final')},
+            'question_system':analysis.QUESTION_SYSTEM}
+
+
+@app.get('/analysis-templates')
+def list_templates():
+    return template_listing()
+
+
+@app.post('/analysis-templates')
+def create_template(req: TemplateReq):
+    try:
+        template_id = analysis.templates.create(req.name, req.sections)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {**template_listing(), 'id':template_id}
+
+
+@app.patch('/analysis-templates/{template_id}')
+def update_template(template_id: str, req: TemplateReq):
+    try:
+        analysis.templates.update(template_id, req.name, req.sections)
+    except KeyError:
+        raise HTTPException(404, 'Formato no encontrado')
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return template_listing()
+
+
+@app.delete('/analysis-templates/{template_id}')
+def delete_template(template_id: str):
+    """Removes a user format; a base format goes back to its original text."""
+    try:
+        analysis.templates.delete(template_id)
+    except KeyError:
+        raise HTTPException(404, 'Formato no encontrado')
+    return template_listing()
+
+
+class QuestionReq(BaseModel):
+    question: str = Field(max_length=500)
+
+
+@app.post('/sessions/{sid}/questions')
+def ask_session(sid: str, req: QuestionReq):
+    stored_session(sid)
+    try:
+        return get_analysis_queue().ask(sid, req.question)
+    except analysis.AnalysisError as exc:
+        raise HTTPException(502, str(exc))
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.delete('/sessions/{sid}/questions/{question_id}')
+def forget_question(sid: str, question_id: str):
+    stored_session(sid)
+    try:
+        get_analysis_queue().forget_question(sid, question_id)
+    except KeyError:
+        raise HTTPException(404, 'Pregunta no encontrada')
+    return {'ok':True}
 
 
 @app.get('/sessions/{sid}/analysis')
 def get_saved_analysis(sid: str):
     stored_session(sid)
     return repository.analysis(sid)
+
+
+def analysis_document(sid):
+    stored_session(sid)
+    try:
+        path = repository.markdown_path(sid)
+        if not path.exists():
+            path = repository.write_markdown(sid)
+        return path
+    except KeyError as exc:
+        raise HTTPException(404, str(exc).strip("'"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(500, f'No se pudo generar el documento del análisis: {exc}')
+
+
+@app.get('/sessions/{sid}/analysis/markdown')
+def analysis_markdown(sid: str):
+    path = analysis_document(sid)
+    return {'path':str(path), 'text':path.read_text(encoding='utf-8')}
+
+
+@app.post('/sessions/{sid}/analysis/open')
+def open_analysis_document(sid: str):
+    path = analysis_document(sid)
+    try:
+        os.startfile(path)
+    except OSError as exc:
+        raise HTTPException(400, str(exc))
+    return {'ok':True, 'path':str(path)}
 
 
 @app.post('/sessions/{sid}/analysis')
@@ -1905,6 +2221,12 @@ def post_settings(req: SettingsReq):
         if session.state not in ("ready", "finished"):
             raise HTTPException(409, "Termina la sesión antes de cambiar el uso del procesador")
         settings.save({"cpu_mode": req.cpu_mode})
+    for option in ("speech_detection", "unload_models_when_idle"):
+        value = getattr(req, option)
+        if value is not None:
+            settings.save({option: value})
+    if req.unload_models_when_idle is not None:
+        session.unload_if_idle()
     if req.live_partials is not None:
         settings.save({"live_partials": req.live_partials})
         session.live = req.live_partials

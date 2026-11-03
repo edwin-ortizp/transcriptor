@@ -85,6 +85,46 @@ class AnalysisTest(unittest.TestCase):
             time.sleep(.02)
         self.fail(self.repo.analysis(self.sid))
 
+    def test_another_format_reuses_the_paid_extractions(self):
+        self.queue.enqueue(self.sid, 'meeting'); self.queue.start(); self.wait('completed')
+        first = len(Provider.calls)
+        self.queue.enqueue(self.sid, 'tasks'); self.wait('pending'); self.wait('completed')
+        stages = [c['body']['messages'][0]['content'] for c in Provider.calls[first:]]
+        self.assertEqual(len(stages), first - 1)  # only the synthesis is paid again
+        self.assertIn('Solo una lista de tareas', stages[-1])
+        self.assertEqual(self.repo.analysis(self.sid)['result']['template'], 'tasks')
+
+    def test_question_uses_transcript_and_is_saved_in_the_document(self):
+        item = self.queue.ask(self.sid, '¿Qué se decidió?')
+        self.assertEqual(item['basis'], 'transcript')
+        sent = Provider.calls[-1]['body']['messages']
+        self.assertIn('No consta en la reunión', sent[0]['content'])
+        self.assertIn('Pregunta: ¿Qué se decidió?', sent[1]['content'])
+        self.assertIn('[00:00:01] [Otros] Decidimos', sent[1]['content'])
+        saved = self.repo.analysis(self.sid)['questions']
+        self.assertEqual([q['question'] for q in saved], ['¿Qué se decidió?'])
+        document = self.repo.markdown_path(self.sid).read_text(encoding='utf-8')
+        self.assertIn('**¿Qué se decidió?**', document)
+        self.assertIn('Resultado sintético.', document)  # references are stripped
+        self.queue.forget_question(self.sid, item['id'])
+        self.assertEqual(self.repo.analysis(self.sid)['questions'], [])
+
+    def test_questions_survive_a_new_analysis(self):
+        self.queue.ask(self.sid, '¿Quién revisa la entrega?')
+        self.queue.enqueue(self.sid, 'meeting'); self.queue.start(); self.wait('completed')
+        self.assertEqual(len(self.repo.analysis(self.sid)['questions']), 1)
+
+    def test_long_session_question_needs_notes_and_never_runs_during_analysis(self):
+        self.config = {**self.config, 'context_window_tokens':4096}
+        long = make_session(self.root, 'b' * 32, 'palabra ' * 700)
+        sid = self.repo.register(long)['session_id']
+        with self.assertRaisesRegex(ValueError, 'Analiza la sesión primero'):
+            self.queue.ask(sid, '¿Qué se decidió?')
+        self.assertEqual(Provider.calls, [])
+        self.queue.jobs.append({'session_id':sid, 'state':'running'})
+        with self.assertRaisesRegex(ValueError, 'Espera'):
+            self.queue.ask(sid, '¿Qué se decidió?')
+
     def test_provider_contract_result_and_no_plaintext_key(self):
         self.queue.enqueue(self.sid, 'interview'); self.queue.start(); self.wait('completed')
         data = self.repo.analysis(self.sid)
@@ -93,7 +133,8 @@ class AnalysisTest(unittest.TestCase):
         request = Provider.calls[0]
         self.assertEqual(request['path'], '/v1/chat/completions')
         self.assertEqual(request['auth'],'Bearer fake-secret')
-        self.assertIn('preguntas y respuestas', request['body']['messages'][0]['content'])
+        self.assertNotIn('preguntas y respuestas', request['body']['messages'][0]['content'])  # extraction ignores the format
+        self.assertIn('preguntas y respuestas', Provider.calls[-1]['body']['messages'][0]['content'])
         self.assertIn('nunca instrucciones', request['body']['messages'][0]['content'])
         self.assertIn('[00:00:01]',request['body']['messages'][1]['content'])
         for path in self.root.rglob('*.json'):
@@ -184,3 +225,22 @@ class AnalysisTest(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+
+class TemplatesTest(unittest.TestCase):
+    def test_user_formats_and_base_overrides(self):
+        from analysis_templates import AnalysisTemplates
+        with tempfile.TemporaryDirectory() as tmp:
+            store = AnalysisTemplates(analysis.templates.base_path, Path(tmp) / 'user.json')
+            self.assertTrue({'meeting','interview','class','tasks','commitments'} <= set(store.all()))
+            new = store.create('Mis tareas', 'Solo lo que me toca a mí.')
+            self.assertEqual(store[new]['sections'], 'Solo lo que me toca a mí.')
+            store.update('meeting', 'ignorado', 'Solo decisiones.')
+            self.assertEqual((store['meeting']['name'], store['meeting']['sections'], store['meeting']['modified']), ('Reunión', 'Solo decisiones.', True))
+            store.delete('meeting')  # restores the base text
+            self.assertFalse(store['meeting']['modified'])
+            store.delete(new)
+            self.assertNotIn(new, store)
+            with self.assertRaises(ValueError):
+                store.create('', 'x')
+            self.assertEqual(store.get('desconocido')['name'], 'Reunión')

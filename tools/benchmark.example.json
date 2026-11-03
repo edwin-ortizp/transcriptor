@@ -1,0 +1,15 @@
+{
+  "models": ["multi_turbo", "parakeet_tdt"],
+  "device": "cpu",
+  "language": "es",
+  "samples": [
+    {
+      "audio": "muestras/voz.wav",
+      "reference": "Hola. Esta es una prueba de voz."
+    },
+    {
+      "audio": "muestras/otra-muestra.wav",
+      "reference_file": "muestras/otra-muestra.txt"
+    }
+  ]
+}

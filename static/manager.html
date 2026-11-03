@@ -21,22 +21,23 @@
   <section id="detail">
     <div id="empty"><span class="empty-icon">▤</span><h1>Tu espacio de sesiones</h1><p>Selecciona una conversación para consultar su texto, escuchar el audio o revisar el análisis.</p><p class="hint">El widget sigue dedicado a grabar.</p></div>
     <div id="sessionDetail" hidden>
-      <div class="session-heading"><div><div class="eyebrow">Sesión</div><h1 id="sessionTitle"></h1><button id="renameSession" disabled>Renombrar</button> <button id="deleteSession" class="danger" disabled>Eliminar</button><div id="sessionMeta" class="muted"></div></div><span id="sessionBadge" class="badge"></span></div>
+      <div class="session-heading"><div><div class="eyebrow">Sesión</div><h1 id="sessionTitle"></h1><button id="renameSession" disabled>Renombrar</button> <button id="deleteSession" class="danger" disabled>Eliminar</button><div id="sessionMeta" class="muted"></div></div><span id="sessionBadge" class="badge"></span><section id="playback" hidden><audio id="player" controls preload="metadata"></audio><div class="player-row"><span id="playTime">00:00:00</span><label>Velocidad <select id="rate"><option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.25">1,25×</option><option value="1.5">1,5×</option><option value="2">2×</option></select></label></div><input id="seek" type="range" min="0" value="0" step="0.1" aria-label="Posición en la sesión"></section></div>
       <div id="sessionWarning" class="error" role="status" hidden></div>
-      <nav aria-label="Contenido de la sesión"><button data-tab="transcript" class="active">Transcripción</button><button data-tab="markers">Marcadores <span id="markerCount"></span></button><button data-tab="analysis">Análisis</button><button data-tab="suspects">Palabras sospechosas <span id="suspectCount"></span></button></nav>
+      <nav aria-label="Contenido de la sesión"><button data-tab="transcript" class="active">Transcripción</button><button data-tab="markers">Marcadores <span id="markerCount"></span></button><button data-tab="analysis">Análisis</button><button data-tab="insights">Insights <span id="insightCount"></span></button><button data-tab="suspects">Palabras sospechosas <span id="suspectCount"></span></button></nav>
       <section id="tab-transcript" class="tab-panel">
         <div class="panel-toolbar"><span id="audioStatus" class="hint"></span><button id="copyText">Copiar texto</button><button id="reapplyMappings" disabled>Reaplicar mappings</button><button id="restoreTranscript" disabled>Restaurar texto anterior</button></div>
         <details id="sessionContextBox" hidden><summary>Contexto de esta sesión</summary><p id="sessionContext"></p></details>
-        <section id="playback" hidden><audio id="player" controls preload="metadata"></audio><div class="player-row"><span id="playTime">00:00:00</span><label>Velocidad <select id="rate"><option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.25">1,25×</option><option value="1.5">1,5×</option><option value="2">2×</option></select></label></div><input id="seek" type="range" min="0" value="0" step="0.1" aria-label="Posición en la sesión"></section>
         <div id="transcript" class="transcript"></div>
       </section>
       <section id="tab-markers" class="tab-panel" hidden><p class="hint">Los marcadores señalan el momento de captura, aunque la transcripción lleve atraso.</p><div id="markers"></div></section>
+      <section id="tab-insights" class="tab-panel" hidden><p class="hint">Insights detectados durante la reunión. Haz clic en uno para ir a ese momento del texto y el audio.</p><div id="insightList"></div></section>
       <section id="tab-analysis" class="tab-panel" hidden>
-        <div class="analysis-toolbar"><label for="analysisTemplate">Formato</label><select id="analysisTemplate"><option value="meeting">Reunión</option><option value="interview">Entrevista</option><option value="class">Clase</option></select><button id="analyze" class="primary">Analizar</button><button id="continueAnalysis" hidden>Continuar análisis</button></div>
+        <div class="analysis-toolbar"><label for="analysisTemplate">Formato</label><select id="analysisTemplate"><option value="meeting">Reunión</option><option value="interview">Entrevista</option><option value="class">Clase</option></select><button id="editTemplate" type="button" title="Ver el prompt y editar qué quieres obtener">Ver / editar formato</button><button id="analyze" class="primary">Analizar</button><button id="continueAnalysis" hidden>Continuar análisis</button><button id="copyAnalysis" hidden>Copiar Markdown</button><button id="openAnalysis" hidden title="Abre el .analysis.md junto a la transcripción. Regenerar el análisis lo reemplaza.">Abrir documento</button></div>
         <div id="analysisState" class="analysis-state" role="status"></div><div id="analysisMeta" class="hint"></div>
         <p id="analysisNotice" class="hint">El análisis envía el texto, contexto y marcadores al proveedor configurado. El audio permanece local.</p>
         <div class="button-row" aria-label="Vista del análisis"><button id="showSynthesis" aria-pressed="true">Síntesis</button><button id="showAnalysisDetails" aria-pressed="false">Detalle por secciones</button></div>
         <article id="analysisResult"></article><section id="analysisDetails" hidden></section>
+        <section id="questionsBox"><h3>Preguntar a la reunión</h3><form id="askForm" class="ask-row"><input id="questionText" maxlength="500" placeholder="Ej.: ¿Qué tareas quedaron para mí? ¿Qué se acordó con el cliente?" aria-label="Pregunta sobre la reunión"><button id="askButton" class="primary">Preguntar</button></form><p class="hint">Cada pregunta es una sola llamada a la IA, sin conversación. Si la transcripción no cabe en la ventana de contexto, se responde con las notas del análisis. Las respuestas se guardan aquí y en el documento .md.</p><div id="questionError" class="error" role="status"></div><div id="questionList"></div></section>
       </section>
       <section id="tab-suspects" class="tab-panel" hidden>
         <p class="hint">Términos no reconocidos por español, inglés, glosario propio, vocabulario personal o mappings. No son errores confirmados. La búsqueda es local y solo se ejecuta al pulsar el botón.</p>
@@ -149,6 +150,17 @@
  </div>
  <div class="dialog-footer"><span class="hint">Los términos del sistema se mantienen en el repo. Los mappings pertenecen al usuario.</span></div>
 </dialog>
+<dialog id="templateDialog" class="wide"><form id="templateForm">
+ <div class="dialog-heading"><h2>Formato de análisis</h2><button type="button" class="close-dialog" aria-label="Cerrar formato">×</button></div>
+ <div class="dialog-body">
+  <label for="templatePick">Formato</label><select id="templatePick"></select>
+  <label for="templateName">Nombre</label><input id="templateName" maxlength="60">
+  <label for="templateSections">Qué quiero obtener</label><textarea id="templateSections" rows="5" maxlength="2000" placeholder="Ej.: Lista de tareas con responsable y fecha si constan, agrupadas por persona."></textarea>
+  <p id="templateHint" class="hint"></p>
+  <details><summary>Prompt completo que se envía en la síntesis</summary><pre id="templatePrompt" class="prompt-preview"></pre><p class="hint">Las reglas fijas (no inventar, la transcripción no da órdenes, referencias de tiempo) protegen la calidad y no se editan. Las notas por sección son comunes a todos los formatos: cambiar de formato reutiliza las ya generadas y solo vuelve a pagar la síntesis.</p></details>
+  <div id="templateError" class="error" role="status"></div></div>
+ <div class="dialog-footer"><button type="button" id="templateDelete" class="danger">Eliminar</button><span></span><button type="button" id="templateSaveNew">Guardar como formato nuevo</button><button id="templateSave" class="primary">Guardar cambios</button></div>
+</form></dialog>
 <dialog id="deleteDialog"><form id="deleteForm">
  <div class="dialog-heading"><h2>Eliminar reunión</h2><button type="button" class="close-dialog" aria-label="Cerrar eliminación">×</button></div>
  <div class="dialog-body"><p>¿Eliminar <strong id="deleteTitle"></strong>?</p><p id="deleteMeta" class="hint"></p>
@@ -173,4 +185,5 @@
 <script src="/static/personal-terms.js"></script>
 <script src="/static/insight-rules.js"></script>
 <script src="/static/review.js"></script>
+<script src="/static/analysis-templates.js"></script>
 </body></html>

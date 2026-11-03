@@ -64,7 +64,7 @@ async function loadDetail(sid, changing = false) {
   $('sessionWarning').textContent = data.failure_text || data.archive_error || ''; $('sessionWarning').hidden = !$('sessionWarning').textContent;
   $('sessionContext').textContent = data.context || ''; $('sessionContextBox').hidden = !data.context;
   if (changing) $('analysisTemplate').value = data.template || 'meeting';
-  renderTranscript(data); renderMarkers(data.markers || []);
+  renderTranscript(data); renderMarkers(data.markers || []); renderInsights(data.insights || []);
   if (changing || (data.state === 'finished' && !parts.length)) setupPlayer(data);
   updatePlayback();
   document.dispatchEvent(new CustomEvent('session-detail-loaded',{detail:data}));
@@ -77,7 +77,7 @@ function renderTranscript(data) {
   data.history.forEach(item => {
     const block = document.createElement('div'); block.className = 'fragment' + (item.type === 'note' ? ' note' : '');
     block.dataset.eventId = item.id; block.dataset.start = item.start; block.dataset.end = item.end ?? item.start + 1;
-    block.tabIndex = 0; block.onclick = () => seek(item.start);
+    block.tabIndex = 0; block.onclick = () => { if (!getSelection().toString().trim()) seek(item.start); };
     block.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); seek(item.start); } };
     const meta = document.createElement('div'); meta.className = 'fragment-meta';
     const source = document.createElement('span'); source.className = 'source' + (item.source === 'Yo' ? ' yo' : ''); source.textContent = item.source || 'Nota';
@@ -104,10 +104,23 @@ function renderMarkers(markers) {
     row.append(jump,edit,remove); $('markers').append(row);
   });
 }
+const insightNames = {decision:'Decisión', commitment:'Compromiso', risk:'Riesgo', question:'Pregunta'};
+function renderInsights(items) {
+  $('insightList').replaceChildren(); $('insightCount').textContent = items.length ? `(${items.length})` : '';
+  if (!items.length) $('insightList').textContent = 'Esta sesión no tiene insights. Se generan en vivo durante la grabación cuando los insights están activos en el widget.';
+  [...items].sort((a,b) => (a.start ?? 0) - (b.start ?? 0)).forEach(item => {
+    const row = document.createElement('button'); row.className = 'insight-row' + (item.dismissed ? ' dismissed' : '');
+    const kind = document.createElement('span'); kind.className = 'insight-kind'; kind.textContent = insightNames[item.type] || item.type;
+    const extra = document.createElement('span'); extra.className = 'insight-extra';
+    extra.textContent = [item.start != null ? stamp(item.start) : '', item.source === 'ai' ? 'IA' : 'local', item.pinned ? '📌 fijado' : '', item.dismissed ? 'descartado' : ''].filter(Boolean).join(' · ');
+    row.append(kind, document.createTextNode(item.text), extra);
+    if (item.start != null) row.onclick = () => navigateAnalysis(item.start); else row.disabled = true;
+    $('insightList').append(row);
+  });
+}
 function showTab(name) {
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-panel').forEach(p => p.hidden = p.id !== 'tab-' + name);
-  if (name !== 'transcript') player.pause();
 }
 document.querySelectorAll('[data-tab]').forEach(button => button.onclick = () => showTab(button.dataset.tab));
 function clearPlayer() { player.pause(); player.removeAttribute('src'); player.load(); parts = []; partIndex = -1; duration = 0; $('playback').hidden = true; }
@@ -171,6 +184,8 @@ async function loadAnalysis(sid) {
     $('analysisMeta').textContent = `${data.state !== 'completed' ? 'Último resultado válido · ' : ''}${dateText(result.created_at)} · ${result.model} · prompt v${result.prompt_version} · ${result.calls} llamadas${result.usage?.total_tokens !== undefined ? ' · ' + result.usage.total_tokens + ' tokens reportados' : ''}${result.usage_complete === false ? ' · Consumo incompleto' : ''}${result.estimated_cost_usd !== undefined ? ' · estimado USD ' + result.estimated_cost_usd.toFixed(4) : ''}${result.token_counter ? ' · ' + result.token_counter : ''}`;
     renderAnalysis(result.text);
   }
+  $('copyAnalysis').hidden = $('openAnalysis').hidden = !result && !data.questions?.length;
+  window.renderQuestions?.(data.questions || []);
   const opened = new Set([...$('analysisDetails').querySelectorAll('details[open]')].map(el => el.dataset.stageId));
   $('analysisDetails').replaceChildren();
   const partials = (data.stages || []).filter(n => n.stage === 'extract' && n.state === 'completed');
@@ -212,7 +227,7 @@ function renderAnalysis(text, target = $('analysisResult')) {
     const value = heading ? line.slice(heading[0].length) : line;
     for (const token of value.split(/(\*\*[^*]+\*\*|\[\d+:\d{2}:\d{2}\])/)) {
       if (/^\[\d+:\d{2}:\d{2}\]$/.test(token)) {
-        const ref = document.createElement('button'); ref.className = 'reference'; ref.textContent = token;
+        const ref = document.createElement('button'); ref.className = 'reference'; ref.textContent = '▶'; ref.title = `Ir a ${token.slice(1,-1)}`; ref.setAttribute('aria-label', ref.title);
         ref.onclick = () => { const [h,m,s] = token.slice(1,-1).split(':').map(Number); navigateAnalysis(h*3600+m*60+s); }; block.append(ref);
       } else if (token.startsWith('**') && token.endsWith('**')) { const strong = document.createElement('strong'); strong.textContent = token.slice(2,-2); block.append(strong); }
       else block.append(document.createTextNode(token));
@@ -221,6 +236,26 @@ function renderAnalysis(text, target = $('analysisResult')) {
     target.append(block);
   });
 }
+$('copyAnalysis').onclick = async () => {
+  if (privateView || !selected) return;
+  try { const doc = await api(`/sessions/${selected}/analysis/markdown`); await navigator.clipboard.writeText(doc.text); notify('Análisis copiado en Markdown'); } catch (e) { error(e); }
+};
+$('openAnalysis').onclick = async () => {
+  if (privateView || !selected) return;
+  try { const doc = await api(`/sessions/${selected}/analysis/open`, 'POST'); notify(`Abriendo ${doc.path.split(/[\/]/).pop()}`); } catch (e) { error(e); }
+};
+// Selecting a phrase in the transcript offers to turn it into a mapping.
+const selectionMapping = document.createElement('button'); selectionMapping.id = 'mappingFromSelection'; selectionMapping.textContent = 'Crear mapping'; selectionMapping.hidden = true; document.body.append(selectionMapping);
+document.addEventListener('selectionchange', () => {
+  const sel = getSelection(), text = sel.toString().replace(/\s+/g, ' ').trim();
+  const inside = sel.rangeCount && $('transcript').contains(sel.getRangeAt(0).commonAncestorContainer);
+  if (!text || !inside || text.length > 200 || privateView) { selectionMapping.hidden = true; return; }
+  const box = sel.getRangeAt(0).getBoundingClientRect();
+  selectionMapping.style.left = `${Math.max(8, Math.min(innerWidth - 130, box.left))}px`; selectionMapping.style.top = `${Math.max(8, box.top - 36)}px`;
+  selectionMapping.dataset.text = text; selectionMapping.hidden = false;
+});
+selectionMapping.onmousedown = e => e.preventDefault();
+selectionMapping.onclick = () => { selectionMapping.hidden = true; window.openDictionary?.({view:'mappings', mappingSource:selectionMapping.dataset.text}); };
 $('analyze').onclick = async () => {
   if (privateView || detail?.session_id !== selected) return;
   try { await api(`/sessions/${selected}/analysis`, 'POST', {template:$('analysisTemplate').value}); await loadAnalysis(selected); refreshList().catch(error); }

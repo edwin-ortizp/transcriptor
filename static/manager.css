@@ -31,3 +31,25 @@ nav{flex-wrap:wrap}nav button{white-space:nowrap}.review-toolbar{display:flex;ga
 .text-change pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; margin:6px 0 14px; }
 .insight-flag{color:var(--red);font-weight:700}.insight-chip{font-size:12px;padding:4px 9px;border-radius:99px}.insight-suggestion{padding:10px;border:1px solid var(--line);border-radius:8px;margin:8px 0}.insight-suggestion .button-row{flex-wrap:wrap;margin-top:8px}.insight-suggestion input{flex:1;min-width:160px}#insightTestResult{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--panel);padding:12px;border-radius:8px;font:inherit;font-size:13px;min-height:40px}tr.rule-off td{opacity:.55}
 .danger{border-color:#7a3036;color:#ffb3b3}.danger:hover{border-color:var(--red);background:#3a1f23}#deleteSession{margin-left:4px}
+/* Player in the session heading, reachable from every tab. */
+.session-heading>div:first-child{flex:1;min-width:0}
+.session-heading #playback{margin:0 0 0 auto;width:min(380px,40%);padding:8px 10px;flex-shrink:0}
+.session-heading #player{width:100%;height:34px}
+.session-heading .player-row label{margin:2px 0}
+@media(max-width:850px){.session-heading{flex-wrap:wrap}.session-heading #playback{width:100%;order:3}}
+.fragment{user-select:text}
+#mappingFromSelection{position:fixed;z-index:20;padding:5px 9px;font-size:12px;box-shadow:0 4px 14px #0008}
+.reference{font-size:10px;padding:0 4px;margin:0 2px;opacity:.65;vertical-align:middle}
+.reference:hover{opacity:1}
+.insight-row{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:transparent}
+.insight-row:hover{background:#202934}
+.insight-row .insight-kind{font-size:11px;color:var(--accent);margin-right:8px;text-transform:uppercase}
+.insight-row .insight-extra{font-size:11px;color:var(--muted);margin-left:8px}
+.insight-row.dismissed{opacity:.5}
+#questionsBox{margin-top:28px;border-top:1px solid var(--line);padding-top:16px}
+.ask-row{display:flex;gap:8px}.ask-row input{flex:1}
+.question-item{border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-top:10px}
+.question-item>strong{display:block;margin-bottom:6px}
+.question-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}.question-actions button{font-size:12px;padding:4px 8px}
+.prompt-preview{white-space:pre-wrap;font-size:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:260px;overflow:auto}
+#templateDialog textarea{width:100%;box-sizing:border-box}

@@ -31,6 +31,13 @@ class DesktopEventsTest(unittest.TestCase):
         self.stop.assert_called_once()
         self.desktop.widget.hide.assert_called_once()
 
+    def test_only_manager_allows_text_selection(self):
+        with patch('webview.create_window', side_effect=fake_window) as create:
+            Desktop('http://127.0.0.1:8791', self.stop, Mock(), Mock(), self.probe)
+        widget, manager = create.call_args_list
+        self.assertTrue(manager.kwargs.get('text_select'))
+        self.assertFalse(widget.kwargs.get('text_select', False))
+
     def test_manager_close_does_not_stop_capture(self):
         with patch('webview.event.logger.exception') as errors:
             self.assertTrue(self.desktop.manager.events.closing.set())

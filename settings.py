@@ -22,6 +22,8 @@ DEFAULTS = {
     "opacity": 1.0,
     "opacity_hover": True,
     "live_partials": True,
+    "speech_detection": True,
+    "unload_models_when_idle": True,
     "cpu_mode": "ligero",
     "download_source": "auto",
 }
