@@ -60,7 +60,7 @@ En ⚙, debajo del modelo, se ve de dónde viene el elegido.
 
 Para tener un respaldo rápido: `python app.py --download parakeet` (~640 MB).
 
-Las transcripciones se guardan en `transcripciones/AAAA-MM-DD_HHMMSS <título>.txt` (el título se edita en la cabecera de la ventana), una línea por fragmento:
+Las transcripciones se guardan en `transcripciones/AAAA-MM-DD_HHMMSS-<título>.md` (el título se edita en la cabecera de la ventana), una línea por fragmento:
 
 ```
 [00:12:34] [Otros] texto de la persona remota
@@ -69,7 +69,7 @@ Las transcripciones se guardan en `transcripciones/AAAA-MM-DD_HHMMSS <título>.t
 
 **Ventana:** widget sin marco que se arrastra desde la cabecera o el título (doble clic en el título para renombrarlo). 📌 la deja siempre encima, ⚙ abre los ajustes, — minimiza y ✕ termina la captura y oculta el widget; la aplicación permanece en la bandeja. Desde allí puedes volver a abrirla o elegir Salir. Los círculos YO/OT se iluminan cuando cada fuente habla. Tipografía Nunito incluida en `static/fonts` (licencia OFL). Sin consola: doble clic en `transcriptor.bat`.
 
-**Fuentes en el pie, siempre a la mano y cambiables en caliente:** 🎙 enciende/apaga el micrófono (tachado = apagado) y su ▾ elige cuál; 🔊 hace lo mismo con la salida de audio capturada (Otros). Se pueden cambiar en plena grabación sin reiniciar: las horas siguen continuas y el .txt anota el cambio (`[00:12:03] — micrófono: Logitech BRIO —`).
+**Fuentes en el pie, siempre a la mano y cambiables en caliente:** 🎙 enciende/apaga el micrófono (tachado = apagado) y su ▾ elige cuál; 🔊 hace lo mismo con la salida de audio capturada (Otros). Se pueden cambiar en plena grabación sin reiniciar: las horas siguen continuas y el .md anota el cambio (`[00:12:03] — micrófono: Logitech BRIO —`).
 
 **Ajustes (⚙):** modelo, idioma, transparencia (30–100 %, con opción "opaca al pasar el mouse") y diccionario. Todo se recuerda en `settings.json`. Una selección explícita nunca cambia al dispositivo predeterminado si desaparece; la opción «Predeterminado de Windows» sí resuelve el predeterminado actual.
 
@@ -153,7 +153,7 @@ La búsqueda trabaja fuera de la interfaz y puede ejecutarse para una reunión a
 
 ## Texto en vivo
 
-Mientras alguien habla, la frase en curso se retranscribe cada ~0,6 s y se muestra en gris con un cursor (texto provisional). Al detectar una pausa, se reemplaza por la versión final: mejor contexto, diccionario aplicado y es la única que se guarda en el .txt. Se activa o desactiva en ⚙ → "Transcripción en vivo". Si el motor va lento (p. ej. Whisper en CPU), el provisional se pausa solo para no retrasar los finales.
+Mientras alguien habla, la frase en curso se retranscribe cada ~0,6 s y se muestra en gris con un cursor (texto provisional). Al detectar una pausa, se reemplaza por la versión final: mejor contexto, diccionario aplicado y es la única que se guarda en el .md. Se activa o desactiva en ⚙ → "Transcripción en vivo". Si el motor va lento (p. ej. Whisper en CPU), el provisional se pausa solo para no retrasar los finales.
 
 ## Whisper vs Parakeet
 
@@ -193,12 +193,12 @@ Un portátil de hace varios años puede ser 2–3× más lento que el PC de las 
 
 En ⚙ → **Carpeta de transcripciones** puedes escribir una ruta o usar **Examinar…** en la ventana nativa. **Aplicar** comprueba que se pueda escribir y guarda la preferencia; **Restablecer** vuelve a `transcripciones/`. En navegador se introduce la ruta manualmente. **Abrir carpeta** abre el destino configurado. Los cambios se aplican a la siguiente sesión: nunca trasladan el archivo actual.
 
-- **Iniciar** crea un TXT exclusivo. Si el nombre ya existe, añade un número sin sobrescribirlo.
-- **Pausar** detiene la captura y procesa lo pendiente. Después, **Reanudar** continúa en el mismo TXT; las marcas de tiempo excluyen la pausa. Ambas acciones quedan anotadas.
-- **Terminar** procesa todo el audio pendiente y cierra el TXT, también si estabas en pausa.
+- **Iniciar** crea un Markdown exclusivo. Si el nombre ya existe, añade un número sin sobrescribirlo.
+- **Pausar** detiene la captura y procesa lo pendiente. Después, **Reanudar** continúa en el mismo Markdown; las marcas de tiempo excluyen la pausa. Ambas acciones quedan anotadas.
+- **Terminar** procesa todo el audio pendiente y cierra el Markdown, también si estabas en pausa.
 - **Nueva sesión** limpia la pantalla y restablece el título a «Reunión». Pulsa **Iniciar** para grabar en otro archivo sin cerrar el programa. El archivo anterior se conserva.
 
-Durante el procesamiento se muestra «Pausando…» o «Terminando…» y se bloquean las acciones incompatibles. Modelo, idioma y uso del procesador se mantienen hasta terminar. La sesión finalizada permanece visible y se puede copiar o abrir su TXT; las sesiones nuevas también se pueden reabrir desde su archivo `session.json` (ver abajo).
+Durante el procesamiento se muestra «Pausando…» o «Terminando…» y se bloquean las acciones incompatibles. Modelo, idioma y uso del procesador se mantienen hasta terminar. La sesión finalizada permanece visible y se puede copiar o abrir su Markdown; las sesiones nuevas también se pueden reabrir desde su archivo `session.json` (ver abajo).
 
 ## Widget y gestor de sesiones
 
@@ -207,26 +207,64 @@ La aplicación tiene dos ventanas independientes:
 - **Widget:** texto en vivo, fuentes, pausa/reanudación, terminar, marcar momento (⚑), discreción (◉) y acceso a **Sesiones** (▤). Mantiene sus ajustes locales de captura. Abrir o analizar otra conversación no modifica la grabación activa.
 - **Sesiones:** ventana amplia de 1100 × 760 con listado, búsqueda por título, actualización y apertura de archivos externos. El detalle ofrece pestañas **Transcripción**, **Marcadores**, **Análisis** y **Palabras sospechosas**. En navegador se abre `/manager` en una pestaña con nombre para reutilizarla.
 
-El listado consulta la carpeta configurada y las sesiones abiertas explícitamente. Incluye los TXT anteriores como sesiones de solo lectura, sin audio ni contexto; interpreta sus marcas temporales cuando existen. Los manifiestos incompatibles y archivos ausentes generan avisos. No se migran ni reescriben conversaciones al listarlas o abrirlas.
+El listado consulta la carpeta configurada y las sesiones abiertas explícitamente. Mantiene compatibilidad con transcripciones TXT anteriores y Markdown sin manifiesto, sin audio ni contexto; interpreta sus marcas temporales cuando existen. Los manifiestos incompatibles y archivos ausentes generan avisos. No se migran ni reescriben conversaciones al listarlas o abrirlas.
 
 ### Preparar la próxima sesión
 
 Desde el gestor, **Preparar sesión** permite establecer título, contexto, respaldo y formato de análisis, elegir las fuentes y comprobar el audio. Guarda la preparación e inicia desde el widget; preparar cada reunión no es obligatorio.
 
 - **Probar audio:** muestra nombres, niveles y estados independientes (señal, silencio, apagado o error). El silencio no es un fallo. No carga modelos, transcribe ni guarda audio. Se detiene al cerrar la preparación, cambiar una fuente o iniciar, y termina automáticamente después de un minuto.
-- **Contexto:** hasta 2.000 caracteres. El texto que exceda el límite permanece visible y bloquea el guardado. Whisper lo recibe junto con el contexto reciente y conserva las palabras del diccionario; Parakeet lo guarda como referencia. Se fija al iniciar, se consume una sola vez y no se añade como intervención al TXT. Se puede consultar en el detalle de la sesión.
+- **Contexto:** hasta 2.000 caracteres. El texto que exceda el límite permanece visible y bloquea el guardado. Whisper lo recibe junto con el contexto reciente y conserva las palabras del diccionario; Parakeet lo guarda como referencia. Se fija al iniciar, se consume una sola vez y no se añade como intervención al Markdown. Se puede consultar en el detalle de la sesión.
 - **Guardar respaldo:** desactivado inicialmente; recuerda la última elección. Guarda las fuentes habilitadas, incluidos los silencios y excluyendo pausas. No se puede cambiar durante la grabación.
 - **Formato:** Reunión, Entrevista o Clase. Empieza en Reunión, recuerda la elección y la fija con la sesión. Al regenerar el análisis puedes escoger otro formato.
 
-Cada sesión nueva conserva el TXT habitual y una carpeta del mismo nombre con extensión `.session`. Contiene `session.json` (formato 2, compatible en lectura con formato 1) y, si activaste respaldo, `audio-0001.wav`, etc. El audio usa PCM de 16 kHz y 16 bits, con «Yo» en el canal izquierdo y «Otros» en el derecho; una fuente apagada ocupa silencio. Las partes duran hasta 30 minutos, unos 115 MB; una hora ocupa unos 230 MB. No se elimina audio automáticamente.
+Cada sesión nueva conserva una transcripción `.md` y una carpeta del mismo nombre con extensión `.session`. Contiene `session.json` (formato 2, compatible en lectura con formato 1) y, si activaste respaldo, `audio-0001.wav`, etc. El audio usa PCM de 16 kHz y 16 bits, con «Yo» en el canal izquierdo y «Otros» en el derecho; una fuente apagada ocupa silencio. Las partes duran hasta 30 minutos, unos 115 MB; una hora ocupa unos 230 MB. No se elimina audio automáticamente.
 
 ### Revisar texto, audio y marcadores
 
-**Marcar momento** en el widget toma el tiempo de captura, aunque el motor lleve atraso. En el gestor puedes navegar, renombrar o eliminar marcadores; las anotaciones se reflejan también en el TXT.
+**Marcar momento** en el widget toma el tiempo de captura, aunque el motor lleve atraso. En el gestor puedes navegar, renombrar o eliminar marcadores; las anotaciones se reflejan también en el Markdown.
 
 Al terminar, el reproductor permite escuchar, cambiar volumen y velocidad y recorrer las partes de audio. Pulsar un bloque o marcador lleva a su momento. La sincronización es por bloque, no por palabra; ambas fuentes pueden resaltarse simultáneamente. La reproducción se bloquea mientras otra sesión capture el audio del equipo, y se pausa al activar discreción o cambiar de pestaña de contenido.
 
-**Abrir archivo** acepta `session.json` y TXT: selector nativo en Windows y ruta manual en navegador. No cambia la sesión del widget. Para trasladar una sesión conserva juntos el TXT y su carpeta `.session`. Si falta audio, el texto sigue disponible; si falla el respaldo se muestra como incompleto sin detener por sí mismo la transcripción.
+**Abrir archivo** acepta `session.json`, Markdown y TXT: selector nativo en Windows y ruta manual en navegador. No cambia la sesión del widget. Para trasladar una sesión conserva juntos el Markdown y su carpeta `.session`. Si falta audio, el texto sigue disponible; si falla el respaldo se muestra como incompleto sin detener por sí mismo la transcripción.
+
+### Abrir en Obsidian o VS Code Insiders
+
+Junto al título de la sesión aparecen los logos de **Obsidian** y **VS Code Insiders**. En la pestaña Transcripción abren el documento `.md`; en Análisis abren el `.analysis.md`. Se ocultan en las demás pestañas y se deshabilitan cuando no existe el documento, se está cargando o el contenido está oculto. Los errores de apertura se muestran en la misma ventana.
+
+Las aplicaciones deben estar instaladas en el equipo donde se ejecuta Transcriptor. Obsidian recibe la ruta del archivo y lo abre en su ubicación original: no se crea una bóveda ni se copia el documento. La apertura de archivos externos requiere Obsidian 1.14 y un instalador compatible; se comprobó con la aplicación local 1.14.5. Para Insiders se prioriza la instalación del perfil del usuario y después se busca en el PATH y las ubicaciones habituales. No se utiliza VS Code estable. **Abrir documento**, dentro de Análisis, conserva la apertura con la aplicación predeterminada de Windows.
+
+### Convertir transcripciones TXT existentes
+
+Las nuevas grabaciones usan solo `.md`. Convertir las anteriores es una operación explícita; listar o abrir sesiones no las convierte. Primero consulta la vista previa:
+
+```powershell
+python tools/convert_transcripts_to_md.py
+```
+
+Resuelve los conflictos señalados, termina los análisis pendientes y cierra Transcriptor desde **Salir** en la bandeja (ocultar la ventana no cierra la aplicación). Después ejecuta:
+
+```powershell
+python tools/convert_transcripts_to_md.py --apply
+```
+
+La herramienta conserva el contenido y los identificadores, actualiza las referencias del manifiesto, índice y cola, y traslada las ediciones asociadas de sesiones sin manifiesto. Mantiene el audio, análisis e historial. No sobrescribe un `.md` ni una carpeta de ediciones existentes; un conflicto impide empezar la conversión. La fecha de una sesión sin fecha guardada se fija usando el valor que el listado mostraba antes de convertir.
+
+El registro local `state/transcript-md-migration.json` conserva las escrituras anteriores para recuperar una interrupción. Con la aplicación cerrada:
+
+```powershell
+python tools/convert_transcripts_to_md.py --recover
+```
+
+La recuperación revierte una operación pendiente y se detiene si algún archivo cambió externamente, conservándolo para revisión. Una conversión ya confirmada no se deshace con ese comando. El registro confirmado o revertido se conserva y bloquea una nueva conversión para evitar sobrescribir su evidencia. `--folder RUTA` y `--state RUTA` permiten indicar otras carpetas de transcripciones y estado; deben corresponder a la instalación que se está convirtiendo.
+
+En esta instalación se convirtieron 10 transcripciones el 2026-11-03. Una sesión antigua no tenía fecha guardada: tras detectar el cambio de su fecha visible, el usuario eligió **2026-10-28 10:38:10** desde el nombre original. La decisión y su respaldo figuran en la bitácora de CHG-001 y en `state/transcript-md-date-adjustment.json`.
+
+### Verificación del cambio Markdown y editores
+
+`python -m unittest discover` ejecuta las regresiones con archivos temporales y proveedores sintéticos. `python tools/validate_session_ui.py --editors-only` verifica los botones en Edge, con aperturas simuladas, teclado y ventanas de 1100 × 760 y 760 × 500. `python tools/validate_session_ui.py` recorre también los flujos generales del gestor. Estas pruebas no convierten las sesiones personales ni abren editores reales; la apertura real se comprobó por separado con documentos sintéticos.
+
+Limitación pendiente de otro cambio: la revisión de palabras de los Markdown sin manifiesto `.session` usa un `review.json` compartido en su carpeta. Las sesiones con `.session`, incluidas las 10 convertidas en esta instalación, mantienen su revisión por sesión. La validación general de interfaz se detuvo en la prueba de audio al recibir «Fuente actualizada. Repite la prueba.»; la validación específica de los botones sí pasó.
 
 ## Análisis mediante una API compatible
 

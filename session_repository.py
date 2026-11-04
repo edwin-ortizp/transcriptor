@@ -88,7 +88,9 @@ class SessionRepository:
             return self._read_file(path)
 
     def _read_file(self, path):
-        if path.suffix.lower() == '.txt':
+        if path.name.lower().endswith('.analysis.md'):
+            raise ValueError('Un análisis no es una transcripción de sesión')
+        if path.suffix.lower() in ('.txt', '.md'):
             text = path.read_text(encoding='utf-8-sig')
             sid = 'txt_' + hashlib.sha256(str(path).casefold().encode()).hexdigest()[:24]
             history = []
@@ -123,8 +125,8 @@ class SessionRepository:
             if item.get('type') not in ('text', 'note') or not isinstance(item.get('time'), str):
                 raise ValueError('Fragmento de sesión inválido')
         txt = (path.parent / data['txt']).resolve()
-        if txt.parent != path.parent.parent or txt.suffix.lower() != '.txt':
-            raise ValueError('Referencia TXT inválida')
+        if txt.parent != path.parent.parent or (txt.suffix.lower() not in ('.txt', '.md') or txt.name.lower().endswith('.analysis.md')):
+            raise ValueError('Referencia de transcripción inválida')
         for part in data['parts']:
             self.audio_path(path, part['file'])
         data.setdefault('insights', [])
@@ -154,8 +156,10 @@ class SessionRepository:
                 items[data['session_id']] = data
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 warnings.append(f'{path.name}: {exc}')
-                # Do not hide a TXT when its manifest cannot be read.
-        for path in folder.glob('*.txt'):
+                # Do not hide a transcript when its manifest cannot be read.
+        for path in list(folder.glob('*.txt')) + list(folder.glob('*.md')):
+            if path.name.lower().endswith('.analysis.md'):
+                continue
             if path.resolve() not in covered:
                 try:
                     data = self.register(path)
@@ -195,7 +199,7 @@ class SessionRepository:
     def analysis_path(self, sid):
         with self.lock:
             path = self.paths[sid]
-        return path.with_suffix('.analysis.json') if path.suffix.lower() == '.txt' else path.parent / 'analysis.json'
+        return path.with_suffix('.analysis.json') if path.suffix.lower() in ('.txt', '.md') else path.parent / 'analysis.json'
 
     def analysis(self, sid):
         # Windows readers must not hold the destination open during replacement.
@@ -231,19 +235,19 @@ class SessionRepository:
             n = 0
             while True:
                 candidate = f"{stem}{f' ({n})' if n else ''}"
-                if not any((folder / (candidate + ext)).exists() for ext in ('.txt', '.session', '.analysis.json', '.analysis.md', '.txt.edits')):
+                if not any((folder / (candidate + ext)).exists() for ext in ('.txt', '.md', '.session', '.analysis.json', '.analysis.md', '.txt.edits', '.md.edits')):
                     break
                 n += 1
             from session_edits import edit_root
-            if path.suffix.lower() == '.txt':
-                moves = [(txt, folder / f'{candidate}.txt'), (self.analysis_path(sid), folder / f'{candidate}.analysis.json'),
+            if path.suffix.lower() in ('.txt', '.md'):
+                moves = [(txt, folder / f'{candidate}{txt.suffix}'), (self.analysis_path(sid), folder / f'{candidate}.analysis.json'),
                          (self.markdown_path(sid), folder / f'{candidate}.analysis.md'),
-                         (edit_root(path), folder / f'{candidate}.txt.edits')]
+                         (edit_root(path), folder / f'{candidate}{txt.suffix}.edits')]
                 if sid.startswith('txt_'):
                     self._keep_legacy_id(path, sid)
-                new_path = folder / f'{candidate}.txt'
+                new_path = folder / f'{candidate}{txt.suffix}'
             else:
-                moves = [(txt, folder / f'{candidate}.txt'), (self.markdown_path(sid), folder / f'{candidate}.analysis.md'),
+                moves = [(txt, folder / f'{candidate}{txt.suffix}'), (self.markdown_path(sid), folder / f'{candidate}.analysis.md'),
                          (path.parent, folder / f'{candidate}.session')]
                 new_path = folder / f'{candidate}.session' / path.name
             done = []
@@ -252,9 +256,9 @@ class SessionRepository:
                     if source.exists():
                         source.rename(target)
                         done.append((source, target))
-                if path.suffix.lower() != '.txt':
+                if path.suffix.lower() not in ('.txt', '.md'):
                     manifest = json.loads(new_path.read_text(encoding='utf-8'))
-                    manifest['txt'] = f'../{candidate}.txt'
+                    manifest['txt'] = f'../{candidate}{txt.suffix}'
                     atomic_json(new_path, manifest)
             except OSError:
                 for source, target in reversed(done):
@@ -283,7 +287,7 @@ class SessionRepository:
         if path is None:
             raise KeyError('Sesión no encontrada; actualiza el listado')
         from session_edits import edit_root
-        if path.suffix.lower() == '.txt':
+        if path.suffix.lower() in ('.txt', '.md'):
             candidates = [path, self.analysis_path(sid), self.markdown_path(sid), edit_root(path)]
         else:
             data = self._read_file(path)
@@ -318,7 +322,7 @@ class SessionRepository:
         """The editable analysis document, next to the transcript in the transcripts folder."""
         with self.lock:
             path = self.paths[sid]
-        txt = path if path.suffix.lower() == '.txt' else Path(self._read_file(path)['txt_path'])
+        txt = path if path.suffix.lower() in ('.txt', '.md') else Path(self._read_file(path)['txt_path'])
         return txt.with_suffix('.analysis.md')
 
     def write_markdown(self, sid):
@@ -357,7 +361,7 @@ class SessionRepository:
                 for item in data['history']:
                     source = f"[{item['source']}] " if item['type'] == 'text' else '— '
                     lines.append(f"[{item['time']}] {source}{item['text']}\n")
-                temporary = txt.with_suffix('.txt.tmp')
+                temporary = txt.with_suffix(txt.suffix + '.tmp')
                 temporary.write_text(''.join(lines), encoding='utf-8')
                 temporary.replace(txt)
             for key in ('legacy','txt_path','archive_path'):

@@ -263,6 +263,49 @@ class SessionEditingTest(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.text)
         return response.json()
 
+    def test_markdown_session_preserves_editing_analysis_and_associated_files(self):
+        manifest = json.loads(self.path.read_text(encoding='utf-8'))
+        old = Path(self.repo.get(self.sid)['txt_path'])
+        doc = old.with_suffix('.md')
+        old.rename(doc)
+        manifest['txt'] = '../' + doc.name
+        atomic_json(self.path, manifest)
+        self.repo.save_analysis(self.sid, self.result())
+        self.assertEqual(len(self.repo.list()['sessions']), 1)
+        self.assertEqual(self.apply()['history'][0]['text'], 'Beta beta Árbol técnico')
+        data = self.api_rename('Markdown Ágil')
+        renamed = Path(data['txt_path'])
+        self.assertEqual(renamed.suffix, '.md')
+        self.assertFalse(renamed.with_suffix('.txt').exists())
+        self.assertTrue(renamed.with_suffix('.analysis.md').is_file())
+        reopened = SessionRepository(lambda:self.root,lambda:None,self.root/'index.json')
+        self.assertEqual(len(reopened.list()['sessions']), 1)
+        self.assertEqual(reopened.get(self.sid)['history'], data['history'])
+        removed = []
+        self.repo.delete(self.sid, lambda paths: removed.extend(paths))
+        self.assertIn(renamed, removed)
+        self.assertIn(renamed.with_suffix('.analysis.md'), removed)
+        self.assertIn(Path(data['archive_path']).parent, removed)
+
+    def test_standalone_markdown_keeps_id_edits_and_analysis_on_rename(self):
+        doc = self.root/'Antigua.md'
+        doc.write_text('# Antigua\n\n[00:00:01] [Otros] alfa beta ÁRBOL\n',encoding='utf-8')
+        sid = self.repo.register(doc)['session_id']
+        self.repo.save_analysis(sid,self.result())
+        data = self.api_rename('Sesión Markdown',sid)
+        renamed = Path(data['txt_path'])
+        self.assertEqual(renamed.suffix,'.md')
+        self.assertEqual(data['session_id'],sid)
+        self.assertTrue(renamed.with_suffix('.md.edits').is_dir())
+        self.assertTrue(renamed.with_suffix('.analysis.json').is_file())
+        reopened = SessionRepository(lambda:self.root,lambda:None,self.root/'index.json')
+        reopened.list()
+        self.assertEqual(reopened.get(sid)['session_id'],sid)
+        self.assertEqual(reopened.get(sid)['history'],data['history'])
+        self.assertIn(renamed.with_suffix('.md.edits'),self.repo.files(sid))
+        with self.assertRaises(ValueError):
+            self.repo.register(renamed.with_suffix('.analysis.md'))
+
     def test_rename_moves_transcript_and_folder_keeping_the_timestamp(self):
         data = self.api_rename('Daily: siigo/x')
         self.assertEqual(data['session_id'],self.sid)

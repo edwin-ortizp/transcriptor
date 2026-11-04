@@ -27,7 +27,7 @@ def text_revision(data):
 
 
 def edit_root(path):
-    return path.with_suffix('.txt.edits') if path.suffix.lower() == '.txt' else path.parent/'edits'
+    return path.with_suffix(path.suffix + '.edits') if path.suffix.lower() in ('.txt', '.md') else path.parent/'edits'
 
 
 def metadata(path):
@@ -40,10 +40,10 @@ def metadata(path):
 
 
 def targets_for(path, txt_name):
-    if Path(txt_name).name != txt_name or not txt_name.lower().endswith('.txt'):
-        raise ValueError('Referencia TXT de edición inválida')
+    if Path(txt_name).name != txt_name or (Path(txt_name).suffix.lower() not in ('.txt', '.md') or txt_name.lower().endswith('.analysis.md')):
+        raise ValueError('Referencia de transcripción de edición inválida')
     root = edit_root(path)
-    if path.suffix.lower() == '.txt':
+    if path.suffix.lower() in ('.txt', '.md'):
         if txt_name != path.name: raise ValueError('Referencia de edición inválida')
         return {'txt':path, 'metadata':root/'metadata.json'}
     return {'txt':path.parent.parent/txt_name, 'manifest':path, 'metadata':root/'metadata.json'}

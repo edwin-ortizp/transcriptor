@@ -205,7 +205,7 @@ def validate_dictionary_browser(manager,widget,evidence):
     manager.locator('#saveMapping').click()
     expect(manager.locator('#mappingForm')).not_to_be_visible()
     expect(row).to_contain_text('SGSI nuevo')
-    manager.locator('.mapping-preview summary').click()
+    manager.locator('#dictionaryMappings .mapping-preview summary').click()
     manager.locator('#mappingTestText').fill('SI GO y se ge si')
     manager.locator('#testMappings').click()
     expect(manager.locator('#mappingTestResult')).to_have_text('Siigo y SGSI nuevo')
@@ -468,6 +468,53 @@ def validate_browser(url, evidence, provider_url):
     print(json.dumps({'result':'OK','surface':'Windows Edge, widget + manager','screenshots':str(evidence)},ensure_ascii=False))
 
 
+def validate_document_editors_browser(url,evidence):
+    with sync_playwright() as pw:
+        browser=pw.chromium.launch(channel='msedge',headless=True)
+        page=browser.new_page(viewport={'width':1100,'height':760})
+        errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+        requests=[]
+        def opened(route):
+            requests.append(route.request.post_data_json)
+            route.fulfill(json={'ok':True,'path':'C:/Pruebas Ágiles/documento.md'})
+        page.route('**/document/open',opened)
+        page.goto(url+'/manager')
+        page.locator('[data-session-id="'+ 'b'*32 +'"]').click()
+        if page.locator('#privacyCover').is_visible():page.locator('#privacy').click()
+        expect(page.locator('#openObsidian')).to_be_enabled()
+        for tab in ('transcript','analysis'):
+            page.locator(f'[data-tab={tab}]').click()
+            for button,editor in (('openObsidian','obsidian'),('openInsiders','insiders')):
+                page.locator('#'+button).click()
+                expect(page.locator('#notice')).to_contain_text('Abriendo')
+                expect(page.locator('#'+button)).to_be_enabled()
+                assert requests[-1]=={'document':tab,'editor':editor}
+        for tab in ('markers','insights','suspects'):
+            page.locator(f'[data-tab={tab}]').click()
+            expect(page.locator('#documentEditors')).to_be_hidden()
+        page.locator('[data-tab=analysis]').click()
+        page.locator('[data-session-id="'+next(r['session_id'] for r in page.request.get(url+'/sessions').json()['sessions'] if r['legacy'])+'"]').click()
+        expect(page.locator('#openObsidian')).to_be_disabled()
+        page.locator('[data-tab=transcript]').click()
+        expect(page.locator('#openObsidian')).to_be_enabled()
+        page.locator('#openObsidian').focus();page.keyboard.press('Tab')
+        expect(page.locator('#openInsiders')).to_be_focused()
+        page.unroute('**/document/open')
+        page.route('**/document/open',lambda route:route.fulfill(status=400,json={'detail':'No se encontró Obsidian'}))
+        page.locator('#openObsidian').click()
+        expect(page.locator('#notice')).to_contain_text('No se encontró Obsidian')
+        for width,height in ((1100,760),(760,500)):
+            page.set_viewport_size({'width':width,'height':height})
+            page.screenshot(path=str(evidence/f'document-editors-{width}.png'))
+            assert page.evaluate('document.body.scrollWidth <= innerWidth')
+            for button in ('openObsidian','openInsiders'):
+                box=page.locator('#'+button).bounding_box()
+                assert box and box['x']>=0 and box['x']+box['width']<=width
+        assert not errors,errors
+        browser.close()
+    print(json.dumps({'result':'OK','surface':'Document editor buttons, Edge','screenshots':str(evidence)}))
+
+
 def main():
     from http.server import ThreadingHTTPServer
     from test_analysis import Credentials,Provider,make_session
@@ -508,7 +555,11 @@ def main():
             deadline=time.monotonic()+10
             while not server.started and time.monotonic()<deadline:time.sleep(.05)
             url=f'http://127.0.0.1:{port}'
-            if '--native' in sys.argv:validate_native(url,evidence)
+            if '--editors-only' in sys.argv:
+                app.repository.register(historical)
+                app.repository.save_analysis('b'*32,{'state':'completed','result':{'text':'## Análisis de prueba','created_at':'2026-11-03'}})
+                validate_document_editors_browser(url,evidence)
+            elif '--native' in sys.argv:validate_native(url,evidence)
             else:validate_browser(url,evidence,provider_url)
         finally:
             app.desktop=None;app.window=None

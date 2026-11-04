@@ -1,0 +1,39 @@
+{
+  "_info": "Configuración de \"team loop\" y \"team critique\". Solo la edita el usuario.",
+  "agent": [
+    "claude",
+    "-p",
+    "--permission-mode",
+    "acceptEdits"
+  ],
+  "testCommand": "",
+  "batch": 3,
+  "maxTries": 3,
+  "maxDiffLines": {
+    "S": 300,
+    "M": 1000
+  },
+  "skillPrefix": "/",
+  "_ejemplos": {
+    "claude": [
+      "claude",
+      "-p",
+      "--permission-mode",
+      "acceptEdits"
+    ],
+    "codex": [
+      "codex",
+      "exec",
+      "--full-auto",
+      "{prompt}"
+    ],
+    "gemini": [
+      "gemini",
+      "--approval-mode",
+      "auto_edit",
+      "-p",
+      "{prompt}"
+    ],
+    "nota": "Para Codex usa skillPrefix \"$\"; para Gemini \"\" (texto). Verifica los flags con --help de tu versión."
+  }
+}

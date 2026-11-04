@@ -7,6 +7,8 @@ import asyncio
 import os
 import re
 import socket
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -746,7 +748,10 @@ class Session:
                 stem = file_stem(f"{datetime.now():%Y-%m-%d_%H%M%S}", title)
                 n = 0
                 while True:
-                    self.path = folder / f"{stem}{f' ({n})' if n else ''}.txt"
+                    self.path = folder / f"{stem}{f' ({n})' if n else ''}.md"
+                    if any(self.path.with_suffix(ext).exists() for ext in (".txt", ".session", ".analysis.json", ".analysis.md", ".md.edits", ".txt.edits")):
+                        n += 1
+                        continue
                     try:
                         self.file = open(self.path, "x", encoding="utf-8")
                         break
@@ -1473,7 +1478,70 @@ def stored_session(sid):
 
 @app.get('/sessions/{sid}')
 def get_stored_session(sid: str):
-    return stored_session(sid)
+    data = stored_session(sid)
+    transcript = Path(data.get('txt_path') or data.get('path') or '')
+    try:
+        document = repository.markdown_path(sid)
+        has_analysis = document.is_file()
+    except KeyError:
+        has_analysis = False
+    return {**data, 'documents':{'transcript':transcript.is_file(),
+                                'analysis':has_analysis}}
+
+
+class OpenDocumentReq(BaseModel):
+    document: Literal['transcript', 'analysis']
+    editor: Literal['obsidian', 'insiders']
+
+
+def editor_executable(editor):
+    candidates = []
+    if editor == 'obsidian':
+        if os.name == 'nt':
+            import winreg
+            try:
+                with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r'obsidian\shell\open\command') as key:
+                    command = winreg.QueryValue(key, None)
+                match = re.match(r'^"([^"]+\.exe)"', command, re.I)
+                if match:
+                    candidates.append(Path(match[1]))
+            except OSError:
+                pass
+        candidates += [Path(os.environ.get('ProgramFiles', 'C:/Program Files'))/'Obsidian/Obsidian.exe',
+                       Path(os.environ.get('LOCALAPPDATA', ''))/'Obsidian/Obsidian.exe']
+    else:
+        user_bin = Path(os.environ.get('LOCALAPPDATA', ''))/'Programs/Microsoft VS Code Insiders/bin'
+        command = shutil.which('code-insiders', path=str(user_bin)) or shutil.which('code-insiders')
+        if command:
+            # Launch the actual executable, avoiding cmd.exe and shell parsing of file names.
+            candidates.append(Path(command).parent.parent/'Code - Insiders.exe')
+        candidates += [Path(os.environ.get('ProgramFiles', 'C:/Program Files'))/'Microsoft VS Code Insiders/Code - Insiders.exe',
+                       Path(os.environ.get('LOCALAPPDATA', ''))/'Programs/Microsoft VS Code Insiders/Code - Insiders.exe']
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    name = 'Obsidian' if editor == 'obsidian' else 'VS Code Insiders'
+    raise HTTPException(400, f'No se encontró {name}. Instala la aplicación para abrir el documento.')
+
+
+@app.post('/sessions/{sid}/document/open')
+def open_session_document(sid: str, req: OpenDocumentReq):
+    data = stored_session(sid)
+    try:
+        path = (repository.markdown_path(sid) if req.document == 'analysis'
+                else Path(data.get('txt_path') or data.get('path') or '')).resolve()
+        if not path.is_file():
+            raise HTTPException(404, 'El documento todavía no existe o ya no está disponible.')
+        if req.editor == 'obsidian' and path.suffix.lower() != '.md':
+            raise HTTPException(400, 'Obsidian requiere una transcripción convertida a Markdown.')
+        executable = editor_executable(req.editor)
+        subprocess.Popen([str(executable), str(path)], shell=False,
+                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    except KeyError:
+        raise HTTPException(404, 'El documento todavía no está disponible.')
+    except OSError as exc:
+        raise HTTPException(400, f'No se pudo abrir el documento: {exc}')
+    return {'ok':True, 'path':str(path), 'editor':req.editor}
 
 
 @contextmanager
@@ -1565,7 +1633,7 @@ def rename_saved_session(sid: str, req: RenameSessionReq):
         except OSError as exc:
             return {**data, 'files_warning':f'El título cambió, pero no se pudieron renombrar los archivos (¿están abiertos?): {exc}'}
         if sid == session.session_id and session.finalized:
-            if path.suffix.lower() == '.txt':
+            if path.suffix.lower() in ('.txt', '.md'):
                 session.path = path
             else:
                 session.archive_path = path
@@ -1804,7 +1872,11 @@ def forget_question(sid: str, question_id: str):
 @app.get('/sessions/{sid}/analysis')
 def get_saved_analysis(sid: str):
     stored_session(sid)
-    return repository.analysis(sid)
+    try:
+        available = repository.markdown_path(sid).is_file()
+    except KeyError:
+        available = False
+    return {**repository.analysis(sid), 'document_available':available}
 
 
 def analysis_document(sid):
@@ -1938,10 +2010,10 @@ def open_session(req: OpenSessionReq):
     if not selected and target_window is not None:
         import webview
         result = target_window.create_file_dialog(webview.FileDialog.OPEN, allow_multiple=False,
-                                                  file_types=("Sesiones (*.json;*.txt)",))
+                                                  file_types=("Sesiones (*.json;*.md;*.txt)",))
         selected = result[0] if result else ''
     if not selected:
-        raise HTTPException(400, "Selecciona un session.json o TXT")
+        raise HTTPException(400, "Selecciona un session.json o una transcripción MD o TXT")
     try:
         return repository.register(Path(selected).expanduser(), external=True)
     except (OSError, ValueError, KeyError, TypeError) as exc:

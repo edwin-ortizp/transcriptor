@@ -7,6 +7,30 @@ let rows = [], selected = null, detail = null, native = false, privateView = tru
 let captureRevision = -1;
 let captureState = 'ready', captureId = null, outputEnabled = true, refreshTimer, noticeTimer;
 let parts = [], partIndex = -1, duration = 0;
+let documentTab = 'transcript', openingDocument = false;
+function updateDocumentEditors() {
+  const supported = ['transcript','analysis'].includes(documentTab);
+  $('documentEditors').hidden = !supported;
+  const label = documentTab === 'analysis' ? 'análisis' : 'transcripción';
+  for (const [id, name] of [['openObsidian','Obsidian'], ['openInsiders','VS Code Insiders']]) {
+    const button = $(id);
+    button.title = `Abrir ${label} en ${name}`;
+    button.setAttribute('aria-label', button.title);
+    button.disabled = openingDocument || privateView || !detail?.documents?.[documentTab];
+  }
+}
+async function openDocument(editor) {
+  if (privateView || openingDocument || !selected || !detail?.documents?.[documentTab]) return;
+  const sid = selected, document = documentTab;
+  openingDocument = true; updateDocumentEditors();
+  try {
+    const result = await api(`/sessions/${encodeURIComponent(sid)}/document/open`, 'POST', {document, editor});
+    notify(`Abriendo ${result.path.split(/[\\/]/).pop()} en ${editor === 'obsidian' ? 'Obsidian' : 'VS Code Insiders'}`);
+  } catch (e) { error(e); }
+  finally { openingDocument = false; updateDocumentEditors(); }
+}
+$('openObsidian').onclick = () => openDocument('obsidian');
+$('openInsiders').onclick = () => openDocument('insiders');
 const player = $('player');
 async function api(url, method = 'GET', body) {
   const r = await fetch(url, {method, headers:body ? {'Content-Type':'application/json'} : {}, body:body ? JSON.stringify(body) : undefined});
@@ -51,13 +75,14 @@ function forgetSession(sid) {
 }
 async function loadDetail(sid, changing = false) {
   if (changing || sid !== selected) {
-    selected = sid; clearPlayer(); renderList(); window.resetSuspects?.();
+    selected = sid; detail = null; updateDocumentEditors(); clearPlayer(); renderList(); window.resetSuspects?.();
     analysisJob = null; clearInterval(analysisWaitTimer);
     $('analyze').disabled = true; $('continueAnalysis').hidden = true;
   }
   const data = await api('/sessions/' + encodeURIComponent(sid));
   if (selected !== sid) return;
   detail = data; $('empty').hidden = true; $('sessionDetail').hidden = false;
+  updateDocumentEditors();
   $('sessionTitle').textContent = data.title;
   $('sessionMeta').textContent = `${dateText(data.date)} · ${stamp(data.duration)}${data.legacy ? ' · TXT antiguo, sin audio ni contexto' : ''}`;
   $('sessionBadge').textContent = captureNames[data.state] || 'Guardada';
@@ -119,6 +144,7 @@ function renderInsights(items) {
   });
 }
 function showTab(name) {
+  documentTab = name; updateDocumentEditors();
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-panel').forEach(p => p.hidden = p.id !== 'tab-' + name);
 }
@@ -166,6 +192,8 @@ const stageNames = {pending:'Preparando', extract:'Extracción de secciones', co
 async function loadAnalysis(sid) {
   const data = await api(`/sessions/${sid}/analysis`); if (sid !== selected) return;
   analysisJob = data; clearInterval(analysisWaitTimer);
+  if (detail?.documents) detail.documents.analysis = !!data.document_available;
+  updateDocumentEditors();
   const busy = ['pending','running'].includes(data.state);
   $('analyze').disabled = busy || detail.state !== 'finished';
   $('analyze').textContent = busy ? stateNames[data.state] : data.result || data.can_continue ? 'Regenerar' : ['error','interrupted'].includes(data.state) ? 'Reintentar' : 'Analizar';
@@ -272,6 +300,7 @@ $('openSession').onclick = async () => {
 $('showWidget').onclick = () => { if (native) api('/show-widget','POST').catch(error); else { const target = window.open('', 'transcriptor-widget'); if (target) { try { if (target.location.href === 'about:blank') target.location.href = '/'; target.focus(); } catch (_) { window.open('/', 'transcriptor-widget'); } } } };
 function setPrivate(enabled) {
   privateView = enabled; document.dispatchEvent(new Event('privacy-changed')); document.body.classList.toggle('private', enabled); $('privacyCover').hidden = !enabled;
+  updateDocumentEditors();
   $('privacy').textContent = enabled ? 'Mostrar contenido' : 'Ocultar contenido'; $('privacy').setAttribute('aria-pressed', String(enabled));
   if (enabled) { player.pause(); document.querySelectorAll('dialog[open]').forEach(d => d.close()); document.getSelection()?.removeAllRanges(); document.activeElement?.blur(); }
 }

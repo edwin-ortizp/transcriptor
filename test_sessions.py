@@ -158,9 +158,74 @@ class SessionsTest(unittest.TestCase):
         with patch('app.datetime') as clock:
             clock.now.return_value = fixed
             self.start()
-            self.assertEqual(self.session.path.name, '2026-01-01_120000-Prueba (1).txt')
+            self.assertEqual(self.session.path.name, '2026-01-01_120000-Prueba (1).md')
             self.client.post('/stop'); self.wait('finished')
         self.assertEqual(old.read_text(encoding='utf-8'), 'Original')
+
+    def test_new_recording_is_markdown_and_reopens_without_duplicate_analysis(self):
+        self.start()
+        self.client.post('/stop'); self.wait('finished')
+        self.assertEqual(self.session.path.suffix, '.md')
+        self.assertFalse(self.session.path.with_suffix('.txt').exists())
+        self.session.path.with_suffix('.analysis.md').write_text('# Análisis',encoding='utf-8')
+        listing = self.client.get('/sessions').json()
+        self.assertEqual(len(listing['sessions']),1)
+        detail = self.client.get('/sessions/' + self.session.session_id).json()
+        self.assertEqual(Path(detail['txt_path']),self.session.path)
+        self.assertTrue(detail['history'])
+
+    def document_session(self):
+        folder = self.root/'Documentos Ágiles';folder.mkdir()
+        path = folder/'Sesión & revisión 😀.md'
+        path.write_text('# Ejemplo\n[00:00:01] [Otros] Texto',encoding='utf-8')
+        return path,app.repository.register(path)['session_id']
+
+    def test_document_buttons_open_correct_file_and_application_without_shell(self):
+        path,sid = self.document_session()
+        analysis = path.with_suffix('.analysis.md')
+        analysis.write_text('# Análisis',encoding='utf-8')
+        for editor in ('obsidian','insiders'):
+            for document,target in (('transcript',path),('analysis',analysis)):
+                executable = self.root/(editor+'.exe')
+                with self.subTest(editor=editor,document=document), \
+                     patch('app.editor_executable',return_value=executable) as resolve, \
+                     patch('app.subprocess.Popen') as launch:
+                    response = self.client.post(f'/sessions/{sid}/document/open',json={
+                        'document':document,'editor':editor,'path':'C:/ignored.md','command':'ignored'})
+                    self.assertEqual(response.status_code,200,response.text)
+                    resolve.assert_called_once_with(editor)
+                    self.assertEqual(launch.call_args.args[0],[str(executable),str(target.resolve())])
+                    self.assertFalse(launch.call_args.kwargs['shell'])
+        self.assertEqual(self.client.get(f'/sessions/{sid}').json()['documents'],
+                         {'transcript':True,'analysis':True})
+
+    def test_document_open_rejects_unknown_targets_and_reports_absent_documents_and_apps(self):
+        path,sid = self.document_session()
+        url=f'/sessions/{sid}/document/open'
+        with patch('app.subprocess.Popen') as launch:
+            for body in ({'document':'transcript','editor':'stable'},
+                         {'document':'C:/file.md','editor':'obsidian'}):
+                self.assertEqual(self.client.post(url,json=body).status_code,422)
+            self.assertEqual(self.client.post(url,json={'document':'analysis','editor':'obsidian'}).status_code,404)
+            with patch('app.editor_executable',side_effect=app.HTTPException(400,'No se encontró Obsidian')):
+                response=self.client.post(url,json={'document':'transcript','editor':'obsidian'})
+                self.assertEqual(response.status_code,400)
+                self.assertIn('No se encontró',response.json()['detail'])
+            launch.assert_not_called()
+        with patch('app.editor_executable',return_value=Path('editor.exe')), \
+             patch('app.subprocess.Popen',side_effect=OSError('Sin acceso')):
+            response=self.client.post(url,json={'document':'transcript','editor':'insiders'})
+            self.assertEqual(response.status_code,400)
+            self.assertIn('Sin acceso',response.json()['detail'])
+        self.assertFalse(self.client.get(f'/sessions/{sid}').json()['documents']['analysis'])
+
+    def test_insiders_resolution_uses_actual_exe_next_to_cli(self):
+        folder=self.root/'VS Code Insiders';(folder/'bin').mkdir(parents=True)
+        exe=folder/'Code - Insiders.exe';exe.write_bytes(b'fake')
+        with patch('app.shutil.which',return_value=str(folder/'bin/code-insiders.cmd')) as lookup:
+            self.assertEqual(app.editor_executable('insiders'),exe.resolve())
+            lookup.assert_called_once_with('code-insiders',path=str(
+                Path(app.os.environ.get('LOCALAPPDATA',''))/'Programs/Microsoft VS Code Insiders/bin'))
 
     def test_reconnect_snapshot(self):
         self.start(); self.client.post('/pause'); self.wait('paused')
