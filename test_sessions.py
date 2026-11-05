@@ -28,6 +28,9 @@ class Capture(threading.Thread):
         self.done.set()
 
 
+REAL_ENQUEUE = app.enqueue_compression
+
+
 class SessionsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -50,6 +53,8 @@ class SessionsTest(unittest.TestCase):
         p = patch.object(app, 'session', self.session); p.start(); self.addCleanup(p.stop)
         repo = app.SessionRepository(app.output_dir, app.live_session, self.root / 'session-index.json')
         p = patch.object(app, 'repository', repo); p.start(); self.addCleanup(p.stop)
+        # Compression runs on demand in tests: others read the WAV right after finishing.
+        p = patch.object(app, 'enqueue_compression'); self.enqueued = p.start(); self.addCleanup(p.stop)
         self.client = TestClient(app.app)
         self.addCleanup(self.shutdown)
 
@@ -300,6 +305,148 @@ class SessionsTest(unittest.TestCase):
         marker_data['parts'][0]['file'] = '../escape.wav'
         manifest.write_text(json.dumps(marker_data), encoding='utf-8')
         self.assertEqual(self.client.post('/open-session', json={'path':str(manifest)}).status_code, 400)
+
+    def test_mixed_wav_and_opus_session_is_served_with_each_type(self):
+        import json
+        import shutil
+        import numpy as np
+        import audio_compress
+        self.client.post('/start', json={'backup_audio':True})
+        self.wait('recording')
+        self.session.backup.submit('Yo', 0, np.ones(16000, dtype=np.float32) * .25)
+        self.client.post('/stop'); self.wait('finished')
+        manifest = self.session.archive_path
+        sid = self.session.session_id
+        folder = manifest.parent
+        data = json.loads(manifest.read_text(encoding='utf-8'))
+        first = data['parts'][0]
+        shutil.copy(folder / first['file'], folder / 'audio-0002.wav')
+        data['parts'].append({'file':'audio-0002.wav', 'start':first['start'] + first['duration'], 'duration':first['duration']})
+        manifest.write_text(json.dumps(data), encoding='utf-8')
+        target = audio_compress.compress_file(folder / first['file'])
+        data['parts'][0]['file'] = target.name
+        manifest.write_text(json.dumps(data), encoding='utf-8')
+        self.assertTrue(all(p['available'] for p in self.client.get('/session-data').json()['parts']))
+        for url in (f'/sessions/{sid}/audio/0', f'/session-audio/{sid}/0'):
+            opus = self.client.get(url)
+            self.assertEqual((opus.headers['content-type'], opus.content[:4]), ('audio/ogg', b'OggS'))
+            ranged = self.client.get(url, headers={'Range':'bytes=10-19'})
+            self.assertEqual((ranged.status_code, len(ranged.content)), (206, 10))
+        self.assertEqual(self.client.get(f'/sessions/{sid}/audio/1').headers['content-type'], 'audio/wav')
+        for bad in ('../escape.ogg', 'audio.ogg.tmp', 'audio.mp3'):
+            data['parts'][0]['file'] = bad
+            manifest.write_text(json.dumps(data), encoding='utf-8')
+            self.assertEqual(self.client.post('/open-session', json={'path':str(manifest)}).status_code, 400, bad)
+
+    def finished_with_audio(self):
+        import numpy as np
+        self.client.post('/start', json={'backup_audio':True})
+        self.wait('recording')
+        self.session.backup.submit('Yo', 0, np.ones(16000, dtype=np.float32) * .25)
+        self.client.post('/stop'); self.wait('finished')
+        return self.session.session_id, self.session.archive_path
+
+    def test_finishing_compresses_and_later_saves_keep_the_opus(self):
+        import json
+        sid, manifest = self.finished_with_audio()
+        self.enqueued.assert_called_once_with(sid)
+        wav = json.loads(manifest.read_text(encoding='utf-8'))['parts'][0]['file']
+        self.assertEqual(app.compress_session_audio(sid)['errors'], [])
+        self.session.persist()  # a later save must not bring back the deleted WAV
+        part = self.client.get('/session-data').json()['parts'][0]
+        self.assertTrue(part['file'].endswith('.ogg'))
+        self.assertTrue(part['available'])
+        self.assertFalse((manifest.parent / wav).exists())
+        self.assertEqual(self.client.get(f'/sessions/{sid}/audio/0').headers['content-type'], 'audio/ogg')
+
+    def test_background_worker_compresses_after_finishing(self):
+        import json
+        import time
+        with patch.object(app, 'enqueue_compression', REAL_ENQUEUE):
+            sid, manifest = self.finished_with_audio()
+            deadline = time.time() + 15
+            while sid in app.compressing and time.time() < deadline:
+                time.sleep(.05)
+        self.assertNotIn(sid, app.compressing)
+        self.assertTrue(json.loads(manifest.read_text(encoding='utf-8'))['parts'][0]['file'].endswith('.ogg'))
+
+    def wait_batch(self):
+        import time
+        deadline = time.time() + 15
+        while app.compression_batch and time.time() < deadline:
+            time.sleep(.05)
+        self.assertIsNone(app.compression_batch)
+
+    def test_batch_needs_nothing_when_no_wav(self):
+        state = self.client.post('/audio-compression').json()
+        self.assertEqual((state['sessions'], state['batch']), (0, None))
+
+    def test_batch_compresses_old_sessions_skips_done_and_continues_after_error(self):
+        import json
+        good, good_manifest = self.finished_with_audio()
+        self.client.post('/new-session')
+        bad, bad_manifest = self.finished_with_audio()
+        self.client.post('/new-session')
+        estimate = self.client.get('/audio-compression').json()
+        self.assertEqual(estimate['sessions'], 2)
+        self.assertGreater(estimate['estimated_free'], 0)
+        (bad_manifest.parent / 'audio-0001.wav').write_bytes(b'RIFF' + b'x' * 100)  # unreadable
+        sent = []
+        with patch.object(app, 'enqueue_compression', REAL_ENQUEUE), patch('app.broadcast', sent.append):
+            self.assertEqual(self.client.post('/audio-compression').json()['batch']['total'], 2)
+            self.assertEqual(self.client.post('/audio-compression').status_code in (200, 409), True)
+            self.wait_batch()
+        final = [m for m in sent if m['type'] == 'audio_batch'][-1]
+        self.assertEqual((final['state'], final['failed'], final['done']), ('done', 1, 2))
+        self.assertGreater(final['freed'], 0)
+        self.assertTrue(json.loads(good_manifest.read_text(encoding='utf-8'))['parts'][0]['file'].endswith('.ogg'))
+        self.assertTrue((bad_manifest.parent / 'audio-0001.wav').is_file())
+        self.assertEqual(self.client.get('/audio-compression').json()['sessions'], 1)  # only the failed one remains
+
+    def test_batch_excludes_a_session_being_recorded(self):
+        import numpy as np
+        self.client.post('/start', json={'backup_audio':True})
+        self.wait('recording')
+        self.session.backup.submit('Yo', 0, np.ones(16000, dtype=np.float32) * .25)
+        self.assertEqual(self.client.get('/audio-compression').json()['sessions'], 0)
+
+    def test_batch_cleans_leftover_wav_of_a_compressed_session(self):
+        import json
+        import shutil
+        sid, manifest = self.finished_with_audio()
+        wav = manifest.parent / 'audio-0001.wav'
+        kept = manifest.parent / 'copia'
+        shutil.copy(wav, kept)
+        app.compress_session_audio(sid)
+        kept.rename(wav)
+        self.assertEqual(self.client.get('/audio-compression').json()['sessions'], 1)
+        with patch.object(app, 'enqueue_compression', REAL_ENQUEUE):
+            self.client.post('/audio-compression')
+            self.wait_batch()
+        self.assertFalse(wav.exists())
+        self.assertTrue(json.loads(manifest.read_text(encoding='utf-8'))['parts'][0]['file'].endswith('.ogg'))
+
+    def test_failed_compression_keeps_wav_and_notifies(self):
+        import json
+        from unittest.mock import patch
+        sid, manifest = self.finished_with_audio()
+        wav = json.loads(manifest.read_text(encoding='utf-8'))['parts'][0]['file']
+        with patch('audio_compress.compress_file', side_effect=OSError('disco')), patch('app.broadcast') as sent:
+            report = app.compress_session_audio(sid)
+        self.assertEqual(len(report['errors']), 1)
+        self.assertEqual(sent.call_args.args[0]['state'], 'error')
+        self.assertTrue((manifest.parent / wav).is_file())
+        self.assertEqual(json.loads(manifest.read_text(encoding='utf-8'))['parts'][0]['file'], wav)
+
+    def test_delete_and_file_rename_wait_while_compressing(self):
+        sid, manifest = self.finished_with_audio()
+        app.compressing.add(sid)
+        self.addCleanup(app.compressing.discard, sid)
+        self.assertEqual(self.client.delete('/sessions/' + sid).status_code, 409)
+        revision = self.client.get(f'/sessions/{sid}/editing').json()['revision']
+        renamed = self.client.patch(f'/sessions/{sid}/title', json={'title':'Otro título', 'revision':revision}).json()
+        self.assertIn('comprimiendo', renamed['files_warning'])
+        self.assertTrue(manifest.is_file())
 
     def test_delete_session_sends_every_file_to_trash(self):
         import shutil

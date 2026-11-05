@@ -1,9 +1,9 @@
 # CHG-001 · Transcripciones Markdown y apertura en Obsidian e Insiders
-**Estado:** En verificación
+**Estado:** Cerrado
 **Nivel:** S
 **Modelo sugerido:** estandar
 <!-- Estados y nivel se cambian SOLO con node .claude/team.mjs. Modelo: un perfil de docs/TEAM_MODELS.md -->
-**Creado:** 2026-11-03 · **Aprobado:** 2026-11-03 · **Cerrado:** —
+**Creado:** 2026-11-03 · **Aprobado:** 2026-11-03 · **Cerrado:** 2026-11-04
 **Relacionado:** —
 
 ## 0. En palabras simples
@@ -92,3 +92,4 @@ Actualizar `README.md` con el formato, conversión recuperable y requisitos de a
 - 2026-11-03 — DESVIACIÓN detectada en T4: review.py:146 solo reconoce .txt como transcripción sin manifiesto. Dos .md independientes apuntan al mismo review.json de la carpeta; antes cada TXT usaba su propio .review.json. Reproducción sintética confirmada. No afecta las 10 sesiones reales convertidas, que tienen .session. Propuesta: reconocer .md en esa condición y añadir regresión en test_review.py. El usuario decidió expresamente dejar ese ajuste para otro cambio; no se añadieron review.py ni test_review.py al alcance.
 - 2026-11-03 — Decisión del usuario: dejar para otro cambio la revisión de palabras de Markdown sin .session. Se documenta la limitación; no bloquea la entrega de CHG-001 a verificación.
 - 2026-11-03 — Implementación terminada → En verificación
+- 2026-11-04 — Cerrado por el usuario (Compuerta 3) → done/

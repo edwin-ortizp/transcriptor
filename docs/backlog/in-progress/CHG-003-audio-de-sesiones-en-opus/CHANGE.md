@@ -1,5 +1,5 @@
 # CHG-003 · Audio de sesiones en Opus
-**Estado:** Aprobado
+**Estado:** En desarrollo
 **Nivel:** M
 **Modelo sugerido:** estandar
 <!-- Estados y nivel se cambian SOLO con node .claude/team.mjs. Modelo: un perfil de docs/TEAM_MODELS.md -->
@@ -72,14 +72,20 @@ El respaldo se guarda en WAV sin comprimir y llena OneDrive. Se seguirá graband
 - Docs a actualizar: `README.md:221` (formato, tamaño por hora, WAV temporal, botón de compresión).
 
 ## 7. Tareas
-- [ ] T1 · Convertir un WAV a Opus de forma segura, sin perder el original si algo falla — Resp: dev-implementer — Modelo: estandar — Archivos: audio_compress.py, requirements.txt, test_audio_compress.py — Hecho cuando: los casos de conversión y fallo de §5 pasan
-- [ ] T2 · Reproducir y saltar en sesiones con audio Opus — Resp: dev-implementer — Modelo: estandar — Archivos: app.py, session_repository.py, static/manager.js, test_sessions.py — Hecho cuando: una sesión mixta se reproduce y salta en WebView2 y navegador, y las referencias inválidas se rechazan
-- [ ] T3 · Comprimir automáticamente al terminar cada sesión — Resp: dev-implementer — Modelo: estandar — Archivos: app.py, audio_compress.py, static/manager.js, test_audio_compress.py — Hecho cuando: al terminar, los WAV se reemplazan sin bloquear la interfaz y un fallo muestra aviso y conserva el WAV
-- [ ] T4 · Botón para comprimir sesiones antiguas — Resp: dev-implementer — Modelo: estandar — Archivos: app.py, audio_compress.py, static/manager.html, static/manager.js, test_audio_compress.py — Hecho cuando: pide confirmación, muestra progreso, salta lo convertido y reporta el espacio liberado
+- [x] T1 · Convertir un WAV a Opus de forma segura, sin perder el original si algo falla — Resp: dev-implementer — Modelo: estandar — Archivos: audio_compress.py, requirements.txt, test_audio_compress.py — Hecho cuando: los casos de conversión y fallo de §5 pasan
+- [x] T2 · Reproducir y saltar en sesiones con audio Opus — Resp: dev-implementer — Modelo: estandar — Archivos: app.py, session_repository.py, static/manager.js, test_sessions.py — Hecho cuando: una sesión mixta se reproduce y salta en WebView2 y navegador, y las referencias inválidas se rechazan
+- [x] T3 · Comprimir automáticamente al terminar cada sesión — Resp: dev-implementer — Modelo: estandar — Archivos: app.py, audio_compress.py, static/manager.js, test_audio_compress.py — Hecho cuando: al terminar, los WAV se reemplazan sin bloquear la interfaz y un fallo muestra aviso y conserva el WAV
+- [x] T4 · Botón para comprimir sesiones antiguas — Resp: dev-implementer — Modelo: estandar — Archivos: app.py, audio_compress.py, static/manager.html, static/manager.js, test_audio_compress.py — Hecho cuando: pide confirmación, muestra progreso, salta lo convertido y reporta el espacio liberado
 - [ ] T5 · Verificar criterios de aceptación con una reunión real — Resp: qa-tester — Hecho cuando: todos los criterios de §2 pasan y se anota el MB/hora medido en §8
-- [ ] T6 · Actualizar documentación — Resp: tech-writer — Archivos: README.md — Hecho cuando: §6 está al día
+- [x] T6 · Actualizar documentación — Resp: tech-writer — Archivos: README.md — Hecho cuando: §6 está al día
 
 ## 8. Bitácora de implementación (dev-implementer)
+- 2026-11-04 — Inicio. Base: 202 tests en verde.
+- 2026-11-04 — T1: conversión segura (`audio_compress.py`, `test_audio_compress.py`, `av` en requirements.txt). Se usa `vbr=constrained`: con VBR por defecto el tono de prueba medía 48 kbps; con constrained, 25 kbps. Suite completa OK. Aún no conectado a la app.
+- 2026-11-04 — T2: se aceptan `.wav` y `.ogg` con su tipo (app.py, session_repository.py, test_sessions.py). `static/manager.js` no necesitó cambios. Suite 216 OK. Edge y Chrome headless: Opus de 60 s, duración 60,0 s, salto exacto a 42,5 s y reproducción continúa. WebView2 no se probó directamente (mismo motor que Edge); queda para T5.
+- 2026-11-05 — T3: cola de un trabajador tras `session_finished`; `Session.part_renamed` evita que `persist()` restaure el nombre del WAV; borrar se rechaza (409) y renombrar archivos se pospone durante la compresión. Archivos: app.py, audio_compress.py, static/manager.js, test_sessions.py (no listado en T3; `enqueue_compression` se simula allí porque otros tests leen el WAV). Suite 220 OK, con el trabajador real. Sin probar en la ventana de la app ni con audio en reproducción: si un reproductor retiene el WAV, este queda de más y se reporta como error; el audio sigue disponible.
+- 2026-11-05 — T4: `GET/POST /audio-compression` y panel en Configuración. Archivos: app.py, static/manager.html, static/manager.js, test_sessions.py. Suite 224 OK; sintaxis JS OK. El progreso se muestra por sesión, no por parte como el ejemplo de §3. Sin probar en pantalla.
+- 2026-11-05 — T6: README actualizado (formato, tamaño, borrado del WAV, botón). El tamaño sigue pendiente de confirmar en T5.
 
 ## 9. Preguntas abiertas, decisiones e historial
 - 2026-11-04 — Creado en to-do/ (Borrador, nivel M)
@@ -87,3 +93,5 @@ El respaldo se guarda en WAV sin comprimir y llena OneDrive. Se seguirá graband
 - 2026-11-04 — Roles cubiertos por dev-team-lead: el repo no tiene aún los lineamientos en `docs/`, y esas skills de rol no están disponibles en esta sesión.
 - Nota: 11 MB/hora es un cálculo (24 kbps), no una medición. T5 lo confirma.
 - 2026-11-04 — Aprobado por el usuario (Compuerta 2)
+- 2026-11-04 — Movido a in-progress/ (En desarrollo)
+- 2026-11-04 — Decisión del usuario: mantener 24 kbps aceptando filtración de unos -26 dB entre canales (señal sintética; 32 kbps da -62 dB). El test exige menos de -20 dB.

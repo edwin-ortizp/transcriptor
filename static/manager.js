@@ -372,6 +372,24 @@ $('testApi').onclick = async () => {
   catch (e) { $('settingsState').textContent = e.message; }
   finally { $('testApi').disabled = false; }
 };
+const megabytes = bytes => `${Math.round(bytes / 1048576)} MB`;
+function showCompressionBatch(batch) {
+  const running = batch.done < batch.total; $('compressAudio').disabled = running;
+  if (running) { $('compressionState').textContent = `Comprimiendo audio… sesión ${batch.done + 1} de ${batch.total}`; return; }
+  const summary = `Se liberaron ${megabytes(batch.freed)}.`;
+  $('compressionState').textContent = batch.failed ? `${summary} No se pudo comprimir ${batch.failed} sesión(es); su audio original se conserva.` : summary;
+}
+$('compressAudio').onclick = async () => {
+  const button = $('compressAudio'); button.disabled = true; $('compressionState').textContent = 'Revisando sesiones…';
+  try {
+    const state = await api('/audio-compression');
+    if (state.batch) { showCompressionBatch(state.batch); return; }
+    if (!state.sessions) { $('compressionState').textContent = 'No hay audio por comprimir'; button.disabled = false; return; }
+    if (!confirm(`Se comprimirá el audio de ${state.sessions} sesión(es) y se liberarán unos ${megabytes(state.estimated_free)}. Los WAV se borrarán tras comprobar cada archivo comprimido. ¿Continuar?`)) { $('compressionState').textContent = ''; button.disabled = false; return; }
+    const started = await api('/audio-compression','POST');
+    if (started.batch) showCompressionBatch(started.batch); else { $('compressionState').textContent = 'No hay audio por comprimir'; button.disabled = false; }
+  } catch (e) { $('compressionState').textContent = e.message; button.disabled = false; }
+};
 $('runDiagnostics').onclick = async () => {
   const button = $('runDiagnostics'), list = $('diagnosticsList');
   button.disabled = true; list.replaceChildren(); $('diagnosticsState').textContent = 'Comprobando…';
@@ -414,6 +432,8 @@ function message(data) {
     if (!['ready','finished'].includes(captureState) && $('preparationDialog').open) $('preparationDialog').close();
     scheduleRefresh(); return;
   }
+  if (data.type === 'audio_batch') { showCompressionBatch(data); return; }
+  if (data.type === 'audio_compress') { if (data.state === 'error' && !data.batch) notify('No se pudo comprimir el audio de una sesión; su audio original se conserva'); if (data.state !== 'running') scheduleRefresh(); return; }
   if (data.type === 'session_deleted') { forgetSession(data.session_id); return; }
   if (data.type === 'analysis') { refreshList().catch(error); if (selected === data.session_id) loadAnalysis(selected).catch(error); return; }
   if (['session_saved','session_updated'].includes(data.type) || (['text','note','markers'].includes(data.type) && selected === data.session_id)) scheduleRefresh();

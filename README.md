@@ -218,7 +218,11 @@ Desde el gestor, **Preparar sesión** permite establecer título, contexto, resp
 - **Guardar respaldo:** desactivado inicialmente; recuerda la última elección. Guarda las fuentes habilitadas, incluidos los silencios y excluyendo pausas. No se puede cambiar durante la grabación.
 - **Formato:** Reunión, Entrevista o Clase. Empieza en Reunión, recuerda la elección y la fija con la sesión. Al regenerar el análisis puedes escoger otro formato.
 
-Cada sesión nueva conserva una transcripción `.md` y una carpeta del mismo nombre con extensión `.session`. Contiene `session.json` (formato 2, compatible en lectura con formato 1) y, si activaste respaldo, `audio-0001.wav`, etc. El audio usa PCM de 16 kHz y 16 bits, con «Yo» en el canal izquierdo y «Otros» en el derecho; una fuente apagada ocupa silencio. Las partes duran hasta 30 minutos, unos 115 MB; una hora ocupa unos 230 MB. No se elimina audio automáticamente.
+Cada sesión nueva conserva una transcripción `.md` y una carpeta del mismo nombre con extensión `.session`. Contiene `session.json` (formato 2, compatible en lectura con formato 1) y, si activaste respaldo, el audio por partes. Durante la grabación se escribe `audio-0001.wav`, etc., en PCM de 16 kHz y 16 bits, con «Yo» en el canal izquierdo y «Otros» en el derecho; una fuente apagada ocupa silencio. Las partes duran hasta 30 minutos; una hora ocupa unos 230 MB mientras se graba.
+
+Al terminar la sesión, cada parte se convierte en segundo plano a `audio-0001.ogg` (Opus a 24 kbps, unos 11 MB por hora según pruebas con audio sintético). El WAV se borra, sin pasar por la Papelera, solo después de comprobar el archivo comprimido; si algo falla, se conserva y la app avisa. A 24 kbps puede oírse muy bajo una voz en el canal de la otra si aíslas un canal. Mientras se comprime no se puede eliminar la sesión, y cambiar el título no renombra sus archivos.
+
+Para las sesiones que ya tienes, usa **Configuración → Comprimir audio de sesiones antiguas**: muestra el espacio estimado, pide confirmación y omite lo ya convertido. Ese botón también termina una conversión interrumpida.
 
 ### Revisar texto, audio y marcadores
 
@@ -265,6 +269,10 @@ En esta instalación se convirtieron 10 transcripciones el 2026-11-03. Una sesi�
 `python -m unittest discover` ejecuta las regresiones con archivos temporales y proveedores sintéticos. `python tools/validate_session_ui.py --editors-only` verifica los botones en Edge, con aperturas simuladas, teclado y ventanas de 1100 × 760 y 760 × 500. `python tools/validate_session_ui.py` recorre también los flujos generales del gestor. Estas pruebas no convierten las sesiones personales ni abren editores reales; la apertura real se comprobó por separado con documentos sintéticos.
 
 Limitación pendiente de otro cambio: la revisión de palabras de los Markdown sin manifiesto `.session` usa un `review.json` compartido en su carpeta. Las sesiones con `.session`, incluidas las 10 convertidas en esta instalación, mantienen su revisión por sesión. La validación general de interfaz se detuvo en la prueba de audio al recibir «Fuente actualizada. Repite la prueba.»; la validación específica de los botones sí pasó.
+
+## Diagnóstico del equipo
+
+En **Configuración → Diagnóstico del equipo**, pulsa **Comprobar** para ver si en ese computador cargan las dependencias y los diccionarios, si se puede escribir en la carpeta de sesiones y si Windows permite guardar claves. Muestra la función afectada y qué hacer. Para probar, crea y borra un archivo y una credencial temporales; no envía nada ni muestra claves o contenido de sesiones.
 
 ## Análisis mediante una API compatible
 

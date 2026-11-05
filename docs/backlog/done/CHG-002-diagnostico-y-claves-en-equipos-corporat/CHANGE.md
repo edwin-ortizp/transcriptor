@@ -1,9 +1,9 @@
 # CHG-002 · Diagnóstico y claves en equipos corporativos
-**Estado:** En desarrollo
+**Estado:** Cerrado
 **Nivel:** M
 **Modelo sugerido:** estandar
 <!-- Estados y nivel se cambian SOLO con node .claude/team.mjs. Modelo: un perfil de docs/TEAM_MODELS.md -->
-**Creado:** 2026-11-04 · **Aprobado:** 2026-11-04 · **Cerrado:** —
+**Creado:** 2026-11-04 · **Aprobado:** 2026-11-04 · **Cerrado:** 2026-11-04
 **Relacionado:** CHG-003 (el diagnóstico también revisa `av`)
 
 ## 0. En palabras simples
@@ -69,16 +69,15 @@ En el portátil corporativo fallan "Palabras sospechosas" y el guardado de la cl
 
 ## 7. Tareas
 - [x] T1 · Ver en Configuración qué funciona y qué falta en el equipo — Resp: dev-implementer — Modelo: estandar — Archivos: diagnostics.py, app.py, static/manager.html, static/manager.js, static/manager.css, test_diagnostics.py — Hecho cuando: el diagnóstico lista dependencias, diccionarios, escritura y almacén, y sus tests pasan
-- [ ] T2 · Que los errores digan la causa real y queden registrados — Resp: dev-implementer — Modelo: estandar — Archivos: app.py, review.py, test_review.py — Hecho cuando: existe el registro sin datos sensibles y falta de `spylls` se distingue de permisos en un test
-- [ ] T3 · Probar T1 y T2 en el portátil y anotar la causa encontrada — Resp: qa-tester — Hecho cuando: §8 registra la causa de ambos fallos; si difiere de lo previsto, se detiene y se avisa antes de T4
-- [ ] T4 · Guardar la clave cifrada cuando Windows la rechaza — Resp: dev-implementer — Modelo: estandar — Archivos: credentials_store.py, analysis.py, app.py, static/manager.js, test_credentials.py — Hecho cuando: los casos de claves de §5 pasan y la interfaz indica dónde quedó
-- [ ] T5 · Usar modelos locales sin clave — Resp: dev-implementer — Modelo: estandar — Archivos: analysis.py, app.py, static/manager.js, test_analysis.py — Hecho cuando: local pasa sin clave y la nube sin clave se rechaza
-- [ ] T6 · Verificar criterios de aceptación en el portátil — Resp: qa-tester — Hecho cuando: todos los criterios de §2 pasan
-- [ ] T7 · Actualizar documentación — Resp: tech-writer — Archivos: README.md — Hecho cuando: §6 está al día
+- [x] T3 · Probar T1 en el portátil — Resp: qa-tester — Hecho cuando: el usuario revisa el panel en el portátil
+- [x] T6 · Verificar el diagnóstico en el portátil — Resp: qa-tester — Hecho cuando: el usuario confirma el resultado del panel
+- [x] T7 · Actualizar documentación — Resp: tech-writer — Archivos: README.md — Hecho cuando: el README explica el diagnóstico
 
 ## 8. Bitácora de implementación (dev-implementer)
 - 2026-11-04 — Inicio. Base: 195 tests en verde.
 - 2026-11-04 — T1: `GET /diagnostics` y panel en Configuración. Archivos: diagnostics.py, test_diagnostics.py, app.py, static/manager.html, static/manager.js, static/manager.css. Verificación: suite completa 202 OK; endpoint real en este PC, 8 comprobaciones OK. Sin revisar: el panel en pantalla.
+- 2026-11-04 — T3/T6: el usuario informa que en el portátil el panel salió con todo en "Funciona". No se confirmó aquí ni se volvieron a probar "Buscar palabras" y guardar la clave.
+- 2026-11-04 — T7: README, sección de diagnóstico.
 
 ## 9. Preguntas abiertas, decisiones e historial
 - 2026-11-04 — Creado en to-do/ (Borrador, nivel M)
@@ -87,3 +86,7 @@ En el portátil corporativo fallan "Palabras sospechosas" y el guardado de la cl
 - Hipótesis sin confirmar: el portátil no tiene `spylls` o `keyring`, o una política bloquea el almacén de Windows. T3 lo resuelve.
 - 2026-11-04 — Aprobado por el usuario (Compuerta 2)
 - 2026-11-04 — Movido a in-progress/ (En desarrollo)
+- 2026-11-04 — Decisión del usuario: reducir el alcance al diagnóstico y cerrar. Retiradas sin implementar: T2 (errores y registro), T4 (clave cifrada), T5 (modelo local sin clave). Los criterios de §2 y el diseño de §4 sobre ellas no aplican a esta entrega; de aquí se puede partir si reaparecen los fallos.
+- 2026-11-04 — Causa de los fallos originales sin determinar: el panel no detectó problema alguno.
+- 2026-11-04 — Implementación terminada → En verificación
+- 2026-11-04 — Cerrado por el usuario (Compuerta 3) → done/

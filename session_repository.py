@@ -9,6 +9,7 @@ from pathlib import Path
 from recording import atomic_json, load_manifest
 
 
+AUDIO_TYPES = {'.wav':'audio/wav', '.ogg':'audio/ogg'}
 STAMP = re.compile(r'^(\d{4}-\d{2}-\d{2}_\d{6})')
 INVALID = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
 
@@ -136,7 +137,7 @@ class SessionRepository:
     @staticmethod
     def audio_path(manifest, name):
         root = Path(manifest).parent.resolve()
-        if Path(name).name != name or not name.endswith('.wav'):
+        if Path(name).name != name or Path(name).suffix not in AUDIO_TYPES:
             raise ValueError('Referencia de audio inválida')
         path = (root / name).resolve()
         if path.parent != root:

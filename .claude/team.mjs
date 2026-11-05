@@ -2,11 +2,13 @@
 // team — CLI determinista del equipo de skills (sin dependencias).
 // Uso: node .claude/team.mjs <comando> [args]
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
+const VERSION = '0.10.0';
 const FOLDERS = ['to-do', 'in-progress', 'done', 'archived'];
 const STATES = {
   'Borrador': 'to-do', 'Aprobado': 'to-do',
@@ -119,12 +121,30 @@ function sectionBody(text, n) {
 function hasContent(body) {
   return body.split('\n').some(l => {
     const s = l.trim().replace(/^[-*]\s*/, '');
-    if (!s || s.startsWith('<!--') || /^\|?[\s|:-]+\|?$/.test(s)) return false;
+    if (!s || s.startsWith('<!--') || s.startsWith('#') || /^\|?[\s|:-]+\|?$/.test(s)) return false;
     if (/no aplica/i.test(s)) return true;
     if (s.startsWith('|')) return !/^\|\s*Caso\s*\|/.test(s);
     if (/:\s*$/.test(s) || /:\*\*\s*$/.test(s)) return false;
     return true;
   });
+}
+// Una parte de §3 "no aplica" solo si lo dice su primera línea con contenido.
+function saysNotApplicable(body) {
+  const first = body.replace(/<!--[\s\S]*?-->/g, '').split(/\r?\n/).map(l => l.trim().replace(/^[-*]\s*/, '')).find(l => l && !l.startsWith('#'));
+  return !!first && /^no aplica/i.test(first);
+}
+// Boceto: un bloque de código con contenido que no sea Mermaid.
+function hasSketch(body) {
+  return [...body.matchAll(/^\s*```([^\n]*)\n([\s\S]*?)^\s*```/gm)].some(m => !/mermaid/i.test(m[1]) && m[2].trim());
+}
+// Divide §3 en Experiencia y Visual. Sin subsecciones (CHG antiguo) todo cuenta como Experiencia.
+function designParts(c) {
+  const body = sectionBody(c.text, 3);
+  if (body === null) return null;
+  const clean = body.replace(/<!--[\s\S]*?-->/g, '');
+  const ui = /^### 3\.2\b/m.exec(clean);
+  if (!ui) return { ux: clean, ui: null };
+  return { ux: clean.slice(0, ui.index), ui: clean.slice(ui.index) };
 }
 function validate(c, { forApproval = false } = {}) {
   const errors = [], warnings = [];
@@ -137,6 +157,13 @@ function validate(c, { forApproval = false } = {}) {
   for (const n of req.filter(n => n <= 6)) {
     const b = sectionBody(c.text, n);
     if (b !== null && !hasContent(b)) strict.push(`§${n} ${LABELS[n]} está vacía (llénala o escribe "No aplica — motivo").`);
+  }
+  // El boceto solo se exige al aprobar: los CHG ya aprobados no se revalidan con esta regla.
+  const s3 = sectionBody(c.text, 3);
+  if (forApproval && s3 !== null && c.level !== 'XS' && hasContent(s3.replace(/<!--[\s\S]*?-->/g, ''))) {
+    const parts = designParts(c);
+    const applies = [parts.ux, parts.ui].filter(p => p !== null && !saysNotApplicable(p));
+    if (applies.length && !hasSketch(s3)) errors.push('§3 describe UI pero no tiene boceto ASCII en un bloque de código (si no hay pantallas, escribe "No aplica — motivo").');
   }
   if (c.total === 0) strict.push('§7 no tiene tareas ("- [ ] T1 · ...").');
   c.tasks.forEach(t => {
@@ -191,7 +218,7 @@ function header(id, title, level, state, model) {
 }
 const S_SUMMARY = `
 ## 1. Resumen
-<!-- Qué y por qué, 2-3 líneas. Agrega solo la sección del rol afectado (## 3. UX/UI, ## 4. Diseño técnico o ## 5. Pruebas) si hace falta. -->
+<!-- Qué y por qué, 2-3 líneas. Agrega solo la sección del rol afectado (## 3. UX/UI, ## 4. Diseño técnico o ## 5. Pruebas) si hace falta. Si hay UI, §3 lleva un boceto ASCII de la zona que cambia. -->
 `;
 const FULL_ROLES = `
 ## 1. Resumen
@@ -203,11 +230,20 @@ const FULL_ROLES = `
 - No incluye:
 - Criterios de aceptación (Dado/Cuando/Entonces):
 
-## 3. UX/UI (ux-designer)
-- Flujo:
-- Componentes existentes a reutilizar (ruta):
+## 3. UX/UI
+<!-- Sin pantallas: escribe "No aplica — motivo" en cada parte. Con UI, approve exige un boceto ASCII en un bloque de código. Si hay flujo, agrega un diagrama en un bloque mermaid. -->
+### 3.1 Experiencia (ux-designer)
+- Flujo y cantidad de pasos:
+- Qué contiene cada pantalla y qué es lo más importante:
 - Estados (vacío / carga / error / éxito / validaciones):
-- Responsive y accesibilidad:
+- Mensajes y textos:
+- Accesibilidad de uso (teclado, foco, errores):
+
+### 3.2 Visual (ui-designer)
+- Distribución:
+- Componentes existentes a reutilizar (ruta):
+- Jerarquía, color, tipografía y espaciado (tokens):
+- Responsive y contraste:
 
 ## 4. Diseño técnico (software-architect)
 - Archivos a crear / modificar:
@@ -269,8 +305,9 @@ Perfiles que usan el triage y las tareas ("Modelo sugerido: perfil"). Cambia de 
 // ---------- init ----------
 const CLAUDE_BLOCK = `<!-- team:start -->
 ## Cómo trabaja este repo (equipo de skills)
-- Lineamientos: \`docs/PRODUCT.md\`, \`docs/ARCHITECTURE.md\`, \`docs/UX-DESIGN.md\`, \`docs/TESTING.md\`, \`docs/DOCUMENTATION.md\`. Respétalos siempre.
+- Lineamientos: \`docs/PRODUCT.md\`, \`docs/ARCHITECTURE.md\`, \`docs/UX-DESIGN.md\`, \`docs/UI-DESIGN.md\`, \`docs/TESTING.md\`, \`docs/DOCUMENTATION.md\`. Respétalos siempre.
 - Hallazgos por rol: \`docs/backlog/*.md\`. Cambios a implementar: \`docs/backlog/{to-do,in-progress,done,archived}/CHG-NNN-*/CHANGE.md\`.
+- Punto de entrada para el usuario: la skill \`team\` (Claude Code: \`/team\` · Codex: \`$team\`) elige el rol.
 - Todo cambio de código pasa por un CHG aprobado: la skill \`dev-team-lead\` lo especifica y \`dev-implementer\` lo implementa (Claude Code: \`/nombre\` · Codex: \`$nombre\` · Gemini: pide usar la skill por su nombre).
 - Estados y numeración SOLO con \`node .claude/team.mjs\` (\`help\` para ver todo). \`loop\` y \`critique\` son opcionales y solo los inicia el usuario. Modelos por perfil: \`docs/TEAM_MODELS.md\`.
 - Regla para cualquier agente: no edites archivos fuera de \`docs/\` si no hay un CHG "En desarrollo" (\`node .claude/team.mjs status\`). En Claude Code lo impone un hook (\`.claude/hooks/team-guard.mjs\`); en otros CLI respétala igual. Nunca la desactives sin permiso del usuario.
@@ -317,10 +354,170 @@ function init() {
     fs.writeFileSync(file, (cur ? cur.replace(/\s*$/, '\n\n') : '') + CLAUDE_BLOCK + '\n');
     created.push(`${f} (bloque del equipo)`);
   }
+  registerProjects([ROOT]);
   out(created.length ? '✔ Inicializado:\n  ' + created.join('\n  ') : '✔ Ya estaba inicializado; nada que hacer.');
   out('Lineamientos de cada rol: se crean con sus skills (requieren aprobación).');
 }
 
+
+// ---------- registro de proyectos ----------
+const REGISTRY = path.join(process.env.AGENT_TEAM_HOME || path.join(os.homedir(), '.agent-team'), 'projects.json');
+const samePath = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+function loadProjects() {
+  if (!fs.existsSync(REGISTRY)) return [];
+  try { return JSON.parse(fs.readFileSync(REGISTRY, 'utf8')).projects || []; }
+  catch { fail(`${REGISTRY} no es JSON válido; corrígelo o bórralo.`); }
+}
+function saveProjects(list) {
+  fs.mkdirSync(path.dirname(REGISTRY), { recursive: true });
+  fs.writeFileSync(REGISTRY, JSON.stringify({ projects: list }, null, 2) + '\n');
+}
+function registerProjects(roots) {
+  const list = loadProjects();
+  const added = roots.map(r => path.resolve(r)).filter(r => !list.some(x => samePath(x, r)));
+  if (added.length) saveProjects([...list, ...added]);
+  return added;
+}
+function projectsCommand(args) {
+  const [sub, target] = args;
+  if (sub === 'scan') {
+    if (!target) fail('Uso: projects scan <carpeta>');
+    const base = path.resolve(target);
+    if (!fs.existsSync(base)) fail(`No existe ${base}.`);
+    const found = [base, ...fs.readdirSync(base, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => path.join(base, d.name))]
+      .filter(d => fs.existsSync(path.join(d, '.claude', 'team.mjs')));
+    const added = registerProjects(found);
+    out(`✔ ${found.length} proyecto(s) encontrados, ${added.length} nuevo(s).`);
+    added.forEach(a => out(`  ${a}`));
+    return;
+  }
+  if (sub === 'remove') {
+    if (!target) fail('Uso: projects remove <carpeta>');
+    const list = loadProjects();
+    const left = list.filter(x => !samePath(x, path.resolve(target)));
+    if (left.length === list.length) fail(`${path.resolve(target)} no está registrado.`);
+    saveProjects(left);
+    out(`✔ Quitado del registro: ${path.resolve(target)} (sus archivos no se tocan).`);
+    return;
+  }
+  if (sub) fail('Uso: projects | projects scan <carpeta> | projects remove <carpeta>');
+  const list = loadProjects();
+  if (!list.length) out('Sin proyectos registrados. Detéctalos con: team projects scan <carpeta>');
+  list.forEach(p => out(`${(fs.existsSync(p) ? copyVersion(p) : 'no existe').padEnd(12)} ${p}`));
+}
+
+// ---------- actualización de proyectos ----------
+const TEAM_BLOCK_RE = /<!-- team:start -->[\s\S]*?<!-- team:end -->/;
+const sameText = (a, b) => a.replace(/\r\n/g, '\n') === b.replace(/\r\n/g, '\n');
+function copyVersion(root) {
+  const f = path.join(root, '.claude', 'team.mjs');
+  if (!fs.existsSync(f)) return 'sin instalar';
+  return (/^const VERSION = '([^']+)'/m.exec(fs.readFileSync(f, 'utf8')) || [])[1] || 'sin versión';
+}
+function compareVersions(a, b) {
+  const num = v => /^\d/.test(v) ? v.split('.').map(Number) : [0];
+  const x = num(a), y = num(b);
+  for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; }
+  return 0;
+}
+function isGlobalCli(root) { return !samePath(path.resolve(SELF), path.resolve(root, '.claude', 'team.mjs')); }
+// Calcula los cambios sin escribir nada.
+function projectChanges(root) {
+  const changes = [], warnings = [];
+  const tool = (src, relDest) => {
+    if (!fs.existsSync(src)) return;
+    const content = fs.readFileSync(src, 'utf8');
+    const dest = path.join(root, relDest);
+    if (!fs.existsSync(dest) || !sameText(fs.readFileSync(dest, 'utf8'), content)) changes.push({ rel: relDest, content });
+  };
+  tool(SELF, '.claude/team.mjs');
+  tool(path.join(path.dirname(SELF), 'team-guard.mjs'), '.claude/hooks/team-guard.mjs');
+  for (const f of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']) {
+    const file = path.join(root, f);
+    if (!fs.existsSync(file)) continue;
+    const cur = fs.readFileSync(file, 'utf8');
+    if (!TEAM_BLOCK_RE.test(cur)) continue;
+    const block = cur.includes('\r\n') ? CLAUDE_BLOCK.replace(/\n/g, '\r\n') : CLAUDE_BLOCK;
+    const next = cur.replace(TEAM_BLOCK_RE, () => block);
+    if (!sameText(cur, next)) changes.push({ rel: f, content: next });
+  }
+  const sfile = path.join(root, '.claude', 'settings.json');
+  try {
+    const settings = fs.existsSync(sfile) ? JSON.parse(fs.readFileSync(sfile, 'utf8')) : {};
+    if (!JSON.stringify(settings.hooks?.PreToolUse || []).includes('team-guard.mjs')) {
+      settings.hooks ??= {};
+      settings.hooks.PreToolUse ??= [];
+      settings.hooks.PreToolUse.push({ matcher: 'Edit|Write|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/team-guard.mjs"' }] });
+      changes.push({ rel: '.claude/settings.json', content: JSON.stringify(settings, null, 2) + '\n' });
+    }
+  } catch { warnings.push('.claude/settings.json no es JSON válido; no se revisó el hook.'); }
+  return { changes, warnings };
+}
+function applyChanges(root, changes) {
+  for (const c of changes) {
+    const dest = path.join(root, c.rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, c.content);
+  }
+}
+function changelogSince(from) {
+  const file = path.join(path.dirname(SELF), '..', '..', '..', 'CHANGELOG.md');
+  if (!fs.existsSync(file)) return '';
+  const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  return text.split(/^(?=## )/m).filter(s => {
+    const v = (/^## .*\bv(\d+(?:\.\d+){0,2})\s*$/m.exec(s.split('\n')[0]) || [])[1];
+    return v && compareVersions(v, VERSION) <= 0 && compareVersions(v, from) > 0;
+  }).join('').trim();
+}
+function confirm(question) {
+  if (!process.stdin.isTTY) return false;
+  process.stdout.write(`${question} [s/N] `);
+  const buf = Buffer.alloc(16);
+  const n = fs.readSync(0, buf, 0, 16, null);
+  return /^s/i.test(buf.toString('utf8', 0, n).trim());
+}
+function update(args) {
+  const all = args.includes('--all'), yes = args.includes('--yes'), dry = args.includes('--dry-run');
+  if (!isGlobalCli(ROOT)) fail('Esta es la copia del proyecto. Actualiza con el comando global: team update');
+  let roots;
+  if (all) {
+    roots = loadProjects();
+    if (!roots.length) fail('Sin proyectos registrados. Detéctalos con: team projects scan <carpeta>');
+  } else {
+    if (!fs.existsSync(path.join(ROOT, '.claude', 'team.mjs'))) fail('Este repo no usa el equipo. Para instalarlo: team init');
+    roots = [ROOT];
+  }
+  const pending = [];
+  let lowest = VERSION;
+  for (const root of roots) {
+    if (!fs.existsSync(root)) { out(`⚠ ${root}: la carpeta no existe; se omite (quítala con: team projects remove "${root}").`); continue; }
+    const from = copyVersion(root);
+    if (from === 'sin instalar') { out(`⚠ ${root}: no tiene el equipo instalado; se omite.`); continue; }
+    if (compareVersions(from, VERSION) > 0) { out(`⚠ ${root}: tiene ${from}, más nueva que ${VERSION}; se omite.`); continue; }
+    const { changes, warnings } = projectChanges(root);
+    warnings.forEach(w => out(`⚠ ${root}: ${w}`));
+    if (!changes.length) { out(`✔ ${root}: al día (${from}).`); continue; }
+    out(`↑ ${root}: ${from} → ${VERSION}`);
+    changes.forEach(c => out(`    ${c.rel}`));
+    pending.push({ root, changes });
+    if (compareVersions(from, lowest) < 0) lowest = from;
+  }
+  if (!pending.length) { out('Nada que actualizar.'); return; }
+  const notes = changelogSince(lowest);
+  if (notes) out(`\nNovedades:\n${notes}`);
+  if (dry) { out('\n(dry-run: no se modificó nada)'); return; }
+  if (!yes && !confirm(`\n¿Actualizar ${pending.length} proyecto(s)?`)) {
+    out(process.stdin.isTTY ? 'Cancelado; no se modificó nada.' : '\nNo se modificó nada. Para aplicarlo sin preguntar, repite con --yes.');
+    return;
+  }
+  pending.forEach(p => applyChanges(p.root, p.changes));
+  out(`✔ ${pending.length} proyecto(s) actualizados. No se hizo ningún commit: revisa y confirma en cada repo.`);
+}
+function outdatedWarning() {
+  if (!isGlobalCli(ROOT)) return;
+  const v = copyVersion(ROOT);
+  if (v !== 'sin instalar' && compareVersions(v, VERSION) < 0) out(`\n⚠ Este repo usa la versión ${v} del equipo y hay ${VERSION}. Actualízalo con: team update`);
+}
 
 // ---------- configuración del loop (.claude/team.json) ----------
 const CONFIG_FILE = path.join(ROOT, '.claude', 'team.json');
@@ -420,6 +617,15 @@ function devTasks(c) {
   return c.tasks.map(t => ({ done: t[1] !== ' ', line: t[2], id: (/^(T\d+)/.exec(t[2]) || [])[1] }))
     .filter(t => t.id && /Resp:\s*dev-implementer/i.test(t.line));
 }
+// Marca la tarea real: la alternativa de comentario evita tocar el ejemplo de la plantilla.
+function markTaskDone(text, id) {
+  let marked = false;
+  return text.replace(new RegExp(`<!--[\\s\\S]*?-->|^- \\[ \\] ${id}\\b`, 'gm'), m => {
+    if (m.startsWith('<!--') || marked) return m;
+    marked = true;
+    return m.replace('[ ]', '[x]');
+  });
+}
 function stopLoop(c, reason, hint) {
   const fresh = find(c.id);
   fs.writeFileSync(fresh.file, addHistory(fresh.text, `Loop detenido: ${reason}`));
@@ -499,7 +705,7 @@ function loop(idArg, flags) {
       if (t.ok) {
         c = find(c.id);
         let text = c.text;
-        if (new RegExp(`^- \\[ \\] ${task.id}\\b`, 'm').test(text)) text = text.replace(new RegExp(`^- \\[ \\] (${task.id}\\b)`, 'm'), '- [x] $1');
+        text = markTaskDone(text, task.id);
         text = addHistory(text, `Loop: ${task.id} hecho en ${attempt} intento(s), verificación OK`);
         fs.writeFileSync(c.file, text); syncPlan();
         git(['add', '-A']); git(['commit', '-q', '-m', `${c.id} ${task.id}: ${task.line.split('—')[0].replace(/^T\d+\s*·\s*/, '').trim()}`]);
@@ -531,7 +737,8 @@ function loop(idArg, flags) {
 // ---------- ayuda ----------
 const HELP = {
   init:     ['init', 'Instala el equipo en este repo: docs/backlog/, TEAM_PLAN.md, TEAM_MODELS.md, bloque en CLAUDE.md/AGENTS.md/GEMINI.md, hook de guardia (Claude Code) y .claude/team.json. Seguro de repetir: no pisa lo existente.', 'node .claude/team.mjs init'],
-  status:   ['status [--all]', 'Tablero de cambios por carpeta con nivel, estado y avance. --all incluye archived/.', 'node .claude/team.mjs status'],
+  status:   ['status [--all] [--json]', 'Tablero de cambios por carpeta con nivel, estado y avance. --all incluye archived/. --json entrega todos los datos sin modificar nada.', 'node .claude/team.mjs status'],
+  next:     ['next [CHG-NNN]', 'Qué sigue en cada cambio activo y quién lo hace.', 'team next'],
   show:     ['show CHG-NNN', 'Resumen de un cambio y sus tareas pendientes.', 'node .claude/team.mjs show 3'],
   quick:    ['quick "título" [--model perfil]', 'XS: cambio trivial (texto, color, botón). Queda aprobado y En desarrollo al instante; luego "close".', 'node .claude/team.mjs quick "Cambiar texto del botón Guardar"'],
   new:      ['new "título" [--level S|M|L] [--model perfil]', 'Crea un CHG en to-do/ (Borrador) con la plantilla del nivel. Por defecto M.', 'node .claude/team.mjs new "Filtro por fecha" --level S'],
@@ -545,6 +752,10 @@ const HELP = {
   reopen:   ['reopen CHG-NNN "motivo"', 'En verificación → En desarrollo (QA o el demo falló).', 'node .claude/team.mjs reopen 3 "el filtro ignora la zona horaria"'],
   close:    ['close CHG-NNN', 'Compuerta 3: → done/ Cerrado. Exige todas las tareas hechas (XS cierra directo).', 'node .claude/team.mjs close 3'],
   archive:  ['archive CHG-NNN "motivo"', '→ archived/ (Descartado o Archivado).', 'node .claude/team.mjs archive 5 "ya no se necesita"'],
+  update:   ['update [--all] [--dry-run] [--yes]', 'Actualiza el CLI, la guardia y el bloque de reglas de este repo, o de todos los registrados con --all. Muestra antes qué cambiará, pide confirmación y nunca hace commits ni toca docs/.', 'team update --all --dry-run'],
+  projects: ['projects [scan <carpeta> | remove <carpeta>]', 'Lista los proyectos registrados, detecta los de una carpeta o quita uno del registro.', 'team projects scan C:\\laragon\\www'],
+  lessons:  ['lessons', 'Lecciones por incorporar a los documentos y cambios cerrados sin revisar.', 'team lessons'],
+  ui:       ['ui [--port N] [--no-open]', 'Abre en el navegador el panel de solo lectura con todos los proyectos registrados.', 'team ui'],
   help:     ['help [comando | flujo]', 'Esta ayuda. "help flujo" muestra qué usar según el tamaño de la tarea.', 'node .claude/team.mjs help loop'],
 };
 const FLOW = `Qué usar según la tarea
@@ -558,12 +769,107 @@ Opcionales (tú decides cuándo):
   loop CHG       en lugar de implementar a mano: automático, con frenos y un commit por tarea
 
 Sin loop, implementas con /dev-implementer CHG-NNN como siempre.`;
+function nextStep(c) {
+  switch (c.state) {
+    case 'Borrador': return `completar la spec y aprobar: team approve ${c.id}`;
+    case 'Aprobado': return `implementar: /dev-implementer ${c.id}`;
+    case 'En desarrollo': {
+      const t = c.tasks.find(x => x[1] === ' ');
+      if (!t) return c.level === 'XS' ? `cerrar: team close ${c.id}` : `pasar a verificación: team verify ${c.id}`;
+      const id = (/^(T\d+)/.exec(t[2]) || [])[1] || 'siguiente tarea';
+      const resp = (/Resp:\s*([^—]+)/.exec(t[2]) || [])[1]?.trim() || 'sin responsable';
+      return `${id} (${resp})`;
+    }
+    case 'En verificación': return `verificar: /qa-tester ${c.id}; si pasa: team close ${c.id}`;
+    default: return '';
+  }
+}
+const ROLE_SECTIONS = { pm: 2, arquitectura: 4, qa: 5, docs: 6 };
+const statusOf = body => saysNotApplicable(body) ? 'no aplica' : hasContent(body) ? 'aportó' : 'pendiente';
+// Indica si la sección del rol tiene contenido, no si su skill se ejecutó.
+function roleStatus(c, n) {
+  const body = sectionBody(c.text, n);
+  if (body === null) return REQUIRED[c.level].includes(n) ? 'pendiente' : 'no aplica';
+  return statusOf(body.replace(/<!--[\s\S]*?-->/g, ''));
+}
+function roles(c) {
+  const parts = designParts(c);
+  const missing = REQUIRED[c.level].includes(3) ? 'pendiente' : 'no aplica';
+  const r = Object.fromEntries(Object.entries(ROLE_SECTIONS).map(([k, n]) => [k, roleStatus(c, n)]));
+  return { ...r, ux: parts ? statusOf(parts.ux) : missing, ui: parts?.ui ? statusOf(parts.ui) : parts ? 'no aplica' : missing };
+}
+// Lecciones de §9: "LECCIÓN(rol): texto", incorporada si termina en "→ docs/ARCHIVO"; "LECCIÓN: ninguna" las descarta.
+function lessonsOf(c) {
+  const clean = (sectionBody(c.text, 9) || '').replace(/<!--[\s\S]*?-->/g, '');
+  const found = [...clean.matchAll(/^.*?LECCI[ÓO]N(?:\(([^)]*)\))?:[ \t]*(.+?)[ \t]*\r?$/gm)].map(m => {
+    const target = (/→\s*(docs\/\S+)$/.exec(m[2]) || [])[1] || null;
+    return { role: (m[1] || '').trim(), text: m[2].replace(/\s*→\s*docs\/\S+$/, ''), target };
+  });
+  const items = found.filter(l => !/^ninguna\.?$/i.test(l.text));
+  return { items, declared: found.length > 0 };
+}
+function lessonsSummary(c) {
+  const { items, declared } = lessonsOf(c);
+  return { items, unreviewed: !declared && c.folder === 'done' && c.level !== 'XS' };
+}
+function lessonsCommand() {
+  if (!fs.existsSync(BK)) fail('No existe docs/backlog/. Ejecuta primero: team init');
+  const all = listChanges().filter(c => c.folder !== 'archived').map(c => ({ c, ...lessonsSummary(c) }));
+  const pending = all.flatMap(x => x.items.filter(l => !l.target).map(l => ({ ...l, id: x.c.id })));
+  const unreviewed = all.filter(x => x.unreviewed).map(x => x.c.id);
+  const done = all.reduce((s, x) => s + x.items.filter(l => l.target).length, 0);
+  out(`Por incorporar: ${pending.length} · Incorporadas: ${done}`);
+  pending.forEach(l => out(`  ${l.id}  ${l.role ? `(${l.role}) ` : ''}${l.text}`));
+  if (pending.length) out('Al incorporar una, agrega al final de su línea en §9: → docs/ARCHIVO.md');
+  if (unreviewed.length) out(`Cerrados sin revisar: ${unreviewed.join(', ')}`);
+}
+function snapshot() {
+  const base = { project: path.basename(ROOT), root: ROOT, version: VERSION, copyVersion: copyVersion(ROOT) };
+  if (!fs.existsSync(BK)) return { ...base, initialized: false, changes: [] };
+  return {
+    ...base,
+    initialized: true,
+    changes: listChanges().map(c => ({
+      id: c.id, title: c.title, state: c.state, level: c.level, folder: c.folder, model: c.model,
+      file: rel(c.file), done: c.done, total: c.total,
+      tasks: c.tasks.map(t => ({
+        id: (/^(T\d+)/.exec(t[2]) || [])[1] || '',
+        title: t[2].split('—')[0].replace(/^T\d+\s*·\s*/, '').trim(),
+        resp: (/Resp:\s*([^—]+)/.exec(t[2]) || [])[1]?.trim() || '',
+        done: t[1] !== ' ',
+      })),
+      roles: roles(c),
+      lessons: lessonsSummary(c),
+      log: (sectionBody(c.text, 8) || '').split(/\r?\n/).filter(l => l.startsWith('- ')).slice(-5).map(l => l.slice(2)),
+      next: nextStep(c),
+    })),
+  };
+}
+function nextCommand(idArg) {
+  if (idArg) { const c = find(idArg); out(`${c.id} · ${c.title} · ${c.state}\n  Sigue: ${nextStep(c) || 'nada; está terminado.'}`); return; }
+  if (!fs.existsSync(BK)) fail('No existe docs/backlog/. Ejecuta primero: team init');
+  const active = listChanges().filter(c => !['done', 'archived'].includes(c.folder));
+  if (!active.length) { out('Nada pendiente.'); return; }
+  active.forEach(c => out(`${c.id}  ${c.state.padEnd(16)} ${nextStep(c)}`));
+}
+function summary() {
+  out(`team ${VERSION}`);
+  if (!fs.existsSync(BK)) { out('\nEste repo aún no usa el equipo. Para instalarlo: team init'); out('Ver todos los comandos: team help'); return; }
+  const all = listChanges();
+  const active = all.filter(c => !['done', 'archived'].includes(c.folder));
+  const closed = all.filter(c => c.folder === 'done').length;
+  out(`${path.basename(ROOT)}: ${active.length} activo(s), ${closed} cerrado(s)`);
+  if (!active.length) out('\nNada pendiente. Para empezar: /team quiero …');
+  active.forEach(c => out(`\n${c.id}  ${c.level}  ${c.state}  ${c.done}/${c.total}  ${c.title}\n  Sigue: ${nextStep(c)}`));
+  outdatedWarning();
+  out('\nVer todos los comandos: team help');
+}
 function help(topic) {
   if (topic === 'flujo' || topic === 'flow') { out(FLOW); return; }
   if (topic && HELP[topic]) { const [u, d, e] = HELP[topic]; out(`${u}\n\n${d}\n\nEjemplo:\n  ${e}`); return; }
   if (topic) out(`Comando desconocido: ${topic}\n`);
-  out('team — CLI del equipo de skills   (node .claude/team.mjs <comando>)\n');
-  const groups = [['Instalar y ver', ['init', 'status', 'show', 'help']], ['Crear', ['quick', 'new', 'level']], ['Especificar', ['validate', 'critique', 'approve']], ['Implementar', ['start', 'loop', 'verify', 'reopen']], ['Terminar', ['close', 'archive']]];
+  out('team — CLI del equipo de skills   (team <comando>, o node .claude/team.mjs <comando>)\n');
+  const groups = [['Instalar y ver', ['init', 'ui', 'status', 'next', 'lessons', 'show', 'help']], ['Crear', ['quick', 'new', 'level']], ['Especificar', ['validate', 'critique', 'approve']], ['Implementar', ['start', 'loop', 'verify', 'reopen']], ['Terminar', ['close', 'archive']], ['Proyectos', ['update', 'projects']]];
   for (const [g, cmds] of groups) { out(g); cmds.forEach(k => out(`  ${HELP[k][0].padEnd(52)} ${HELP[k][1].split(/[.:] /)[0].replace(/\.$/, '').slice(0, 70)}`)); out(''); }
   out('Más detalle: help <comando>  ·  Qué usar según la tarea: help flujo');
 }
@@ -612,7 +918,12 @@ switch (cmd) {
     break;
   }
 
+  case 'next': nextCommand(args[0]); break;
+
+  case 'lessons': lessonsCommand(); break;
+
   case 'status': {
+    if (args.includes('--json')) { out(JSON.stringify(snapshot(), null, 2)); break; }
     needInit();
     const all = listChanges();
     const show = args.includes('--all') ? FOLDERS : FOLDERS.filter(f => f !== 'archived');
@@ -624,8 +935,22 @@ switch (cmd) {
     const bad = all.filter(c => STATES[c.state] !== c.folder);
     if (bad.length) out(`\n⚠ Estado y carpeta no coinciden en: ${bad.map(c => c.id).join(', ')} (ejecuta validate).`);
     syncPlan();
+    outdatedWarning();
     break;
   }
+
+  case 'update': update(args); break;
+
+  case 'ui': {
+    const panel = path.join(path.dirname(SELF), 'team-ui.mjs');
+    if (!fs.existsSync(panel)) fail('El panel solo está en la instalación global. Usa el comando: team ui');
+    const { startPanel } = await import(pathToFileURL(panel).href);
+    const i = args.indexOf('--port');
+    startPanel({ cli: SELF, projects: loadProjects, version: VERSION, port: i >= 0 ? +args[i + 1] : 4599, open: !args.includes('--no-open'), log: out });
+    break;
+  }
+
+  case 'projects': projectsCommand(args); break;
 
   case 'show': { const c = find(args[0]); out(rel(c.file)); out(`${c.id} · ${c.title} · ${c.level} · ${c.state} · modelo ${c.model} · tareas ${c.done}/${c.total}`); c.tasks.filter(t => t[1] === ' ').forEach(t => out(`  [ ] ${t[2].split('—')[0].trim()}`)); break; }
 
@@ -685,6 +1010,7 @@ switch (cmd) {
     if (pending.length) fail(`Tareas sin marcar: ${pending.map(t => (/^(T\d+)/.exec(t[2]) || [])[1]).join(', ')}`);
     let t = setState(c.text, 'Cerrado'); t = setDate(t, 'Cerrado', today()); t = addHistory(t, 'Cerrado por el usuario (Compuerta 3) → done/');
     const dir = save(c, t, 'done'); out(`✔ ${c.id} Cerrado → ${rel(dir)}`);
+    if (c.level !== 'XS' && !lessonsOf(c).declared) out(`⚠ ${c.id} no declara lecciones. Agrega en §9 "LECCIÓN(rol): texto", o "LECCIÓN: ninguna" si no hubo.`);
     break;
   }
 
@@ -720,7 +1046,13 @@ switch (cmd) {
     break;
   }
 
-  case undefined:
+  case undefined: summary(); break;
+
+  case '--version':
+  case '-v':
+    out(VERSION);
+    break;
+
   case 'help':
   case '--help':
   case '-h':

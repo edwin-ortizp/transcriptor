@@ -5,6 +5,7 @@ from typing import Literal
 import argparse
 import asyncio
 import os
+import queue
 import re
 import socket
 import shutil
@@ -26,13 +27,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import audio
+import audio_compress
 import recording
 import analysis
 import insights
 import analysis_pipeline
 import trash
 from insight_rules import InsightRules
-from session_repository import SessionRepository, file_stem
+from session_repository import AUDIO_TYPES, SessionRepository, file_stem
 from session_edits import SessionEdits, text_revision
 from probe import AudioProbe
 import corrections
@@ -325,6 +327,18 @@ class Session:
     def backup_failed(self, message):
         self.backup_error = message
         broadcast({"type": "backup_error", "session_id": self.session_id, "text": message})
+
+    def part_renamed(self, archive, old, new):
+        """A finished session's audio was compressed: persist() must not bring back the old name."""
+        with self.archive_lock:
+            if not self.archive_path or self.archive_path.resolve() != Path(archive).resolve():
+                return
+            for part in self.saved_parts:
+                if part['file'] == old:
+                    part['file'] = new
+            for part in (self.backup.parts.values() if self.backup else ()):
+                if part[2] == old:
+                    part[2] = new
 
     def persist(self):
         if not self.archive_path:
@@ -1444,10 +1458,75 @@ def get_analysis_queue():
         return analysis_queue
 
 
+compression_jobs = queue.Queue()
+compressing = set()
+compression_worker = None
+compression_batch = None
+OPUS_SHARE = 25 / 512  # measured Opus kbps over 16 kHz, 16-bit stereo PCM
+
+
+class CompressionGuard:
+    """Reusable: the same locks as the other writers of session.json, always in this order."""
+    def __enter__(self):
+        self.held = (repository.lock, session.archive_lock)
+        for lock in self.held:
+            lock.acquire()
+
+    def __exit__(self, *_):
+        for lock in reversed(self.held):
+            lock.release()
+
+
+def compress_session_audio(sid, batch=False):
+    """Compress one session now. Failures keep the WAV and only produce a notice."""
+    try:
+        broadcast({'type':'audio_compress', 'session_id':sid, 'state':'running'})
+        manifest = repository.paths[sid]
+        report = audio_compress.compress_session(manifest, lock=CompressionGuard(),
+                                                 on_renamed=lambda old, new: session.part_renamed(manifest, old, new))
+    except Exception as exc:
+        report = {'converted':0, 'skipped':0, 'freed':0, 'errors':[{'file':'', 'error':type(exc).__name__}]}
+    broadcast({'type':'audio_compress', 'session_id':sid, 'state':'error' if report['errors'] else 'done', 'batch':batch, **report})
+    return report
+
+
+def compression_loop():
+    while True:
+        sid, batch = compression_jobs.get()
+        try:
+            report = compress_session_audio(sid, batch is not None)
+        finally:
+            compressing.discard(sid)
+        if batch is not None:
+            batch_step(batch, report)
+
+
+def batch_step(batch, report):
+    global compression_batch
+    batch['done'] += 1
+    batch['freed'] += report['freed']
+    batch['failed'] += bool(report['errors'])
+    finished = batch['done'] == batch['total']
+    if finished:
+        compression_batch = None
+    broadcast({'type':'audio_batch', 'state':'done' if finished else 'running', **batch})
+
+
+def enqueue_compression(sid, batch=None):
+    global compression_worker
+    compressing.add(sid)
+    compression_jobs.put((sid, batch))
+    if compression_worker is None or not compression_worker.is_alive():
+        compression_worker = threading.Thread(target=compression_loop, daemon=True)
+        compression_worker.start()
+
+
 def session_finished(captured):
     try:
         repository.register(captured.archive_path)
         broadcast({'type':'session_saved', 'session_id':captured.session_id})
+        if (captured.backup and captured.backup.parts) or captured.saved_parts:
+            enqueue_compression(captured.session_id)
         if analysis_config()['automatic'] and not captured.failure_text and not captured.archive_error:
             queue = get_analysis_queue()
             queue.enqueue(captured.session_id, captured.template, automatic=True)
@@ -1606,6 +1685,8 @@ def delete_session(sid: str):
     with session.lock:
         if sid == session.session_id and session.state not in ('finished', 'ready'):
             raise HTTPException(409, 'No se puede eliminar la sesión que se está grabando; termínala primero')
+        if sid in compressing:
+            raise HTTPException(409, 'Se está comprimiendo el audio de esta sesión; inténtalo cuando termine')
         try:
             if analysis_queue is not None:
                 analysis_queue.forget_session(sid)
@@ -1627,6 +1708,8 @@ def rename_saved_session(sid: str, req: RenameSessionReq):
     data = edit_operation(sid,lambda:session_edits.rename(sid,req.title,req.revision))
     # Files follow the title so the transcripts folder stays readable.
     with session.lock:
+        if sid in compressing:
+            return {**data, 'files_warning':'El título cambió, pero los archivos conservan el nombre anterior porque se está comprimiendo el audio.'}
         if analysis_queue is not None and any(j['session_id'] == sid and j['state'] == 'running' for j in analysis_queue.jobs):
             return {**data, 'files_warning':'El título cambió, pero los archivos se renombran cuando termine el análisis en curso.'}
         try:
@@ -1671,7 +1754,7 @@ def stored_audio(sid: str, index: int):
         raise HTTPException(400, str(exc))
     if not path.is_file():
         raise HTTPException(404, 'Falta el archivo de audio')
-    return FileResponse(path, media_type='audio/wav')
+    return FileResponse(path, media_type=AUDIO_TYPES[path.suffix])
 
 
 @app.patch('/sessions/{sid}/markers/{marker_id}')
@@ -1778,6 +1861,50 @@ def save_analysis_settings(req: AnalysisSettingsReq):
     except Exception:
         raise HTTPException(400, 'No se pudo guardar la clave en el almacén de credenciales de Windows')
     return get_analysis_settings()
+
+
+def sessions_with_wav():
+    """Finished sessions still holding a WAV, including one left over after an interrupted run."""
+    found = {}
+    for row in repository.list()['sessions']:
+        sid = row['session_id']
+        if row.get('legacy') or row.get('state') != 'finished' or sid in compressing:
+            continue
+        try:
+            data = repository.get(sid, include_live=False)
+            for part in data['parts']:
+                wav = repository.audio_path(data['archive_path'], part['file']).with_suffix('.wav')
+                if wav.is_file() and wav.stat().st_size > 44:
+                    found[sid] = found.get(sid, 0) + wav.stat().st_size
+        except (OSError, ValueError, KeyError):
+            continue  # the list already warns about unreadable sessions
+    return found
+
+
+def compression_state():
+    found = sessions_with_wav()
+    wav_bytes = sum(found.values())
+    return {'sessions':len(found), 'wav_bytes':wav_bytes, 'estimated_free':round(wav_bytes * (1 - OPUS_SHARE)),
+            'batch':compression_batch}
+
+
+@app.get('/audio-compression')
+def get_audio_compression():
+    return compression_state()
+
+
+@app.post('/audio-compression')
+def start_audio_compression():
+    global compression_batch
+    with session.lock:
+        if compression_batch:
+            raise HTTPException(409, 'Ya se está comprimiendo el audio')
+        found = sessions_with_wav()
+        if found:
+            compression_batch = {'total':len(found), 'done':0, 'freed':0, 'failed':0}
+            for sid in found:
+                enqueue_compression(sid, compression_batch)
+    return compression_state()
 
 
 @app.get('/diagnostics')
@@ -1986,7 +2113,7 @@ def session_data():
 
 
 def safe_audio_path(name):
-    if not session.archive_path or Path(name).name != name or not name.endswith('.wav'):
+    if not session.archive_path or Path(name).name != name or Path(name).suffix not in AUDIO_TYPES:
         raise HTTPException(400, "Referencia de audio inválida")
     root = session.archive_path.parent.resolve()
     path = (root / name).resolve()
@@ -2006,7 +2133,7 @@ def session_audio(session_id: str, index: int):
         path = safe_audio_path(data['parts'][index]['file'])
         if not path.is_file():
             raise HTTPException(404, "Falta el archivo de audio")
-        return FileResponse(path, media_type='audio/wav')
+        return FileResponse(path, media_type=AUDIO_TYPES[path.suffix])
 
 
 @app.post("/open-session")
