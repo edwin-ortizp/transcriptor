@@ -36,6 +36,7 @@ from session_repository import SessionRepository, file_stem
 from session_edits import SessionEdits, text_revision
 from probe import AudioProbe
 import corrections
+import diagnostics
 from mapping_store import MappingStore, MappingConflict
 from vocabulary import Vocabulary
 from personal_terms import PersonalTerms, normalized as normalize_term
@@ -1777,6 +1778,11 @@ def save_analysis_settings(req: AnalysisSettingsReq):
     except Exception:
         raise HTTPException(400, 'No se pudo guardar la clave en el almacén de credenciales de Windows')
     return get_analysis_settings()
+
+
+@app.get('/diagnostics')
+def get_diagnostics():
+    return diagnostics.run(local_spelling.load, output_dir)
 
 
 @app.post('/analysis-test')

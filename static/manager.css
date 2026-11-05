@@ -9,6 +9,7 @@ header{height:66px;flex-shrink:0;display:flex;justify-content:space-between;alig
 
 body.private #showDictionary{visibility:hidden}
 #dictionaryDialog{width:min(1040px,calc(100vw - 32px));height:min(820px,calc(100vh - 32px));max-height:calc(100vh - 32px)}
+#diagnosticsList{list-style:none;padding:0;margin:10px 0 0}.diagnostic{padding:8px 10px;margin-bottom:6px;border-left:3px solid var(--accent);background:var(--panel);border-radius:6px;overflow-wrap:anywhere;font-size:13px}.diagnostic.problem{border-left-color:var(--red)}
 #dictionaryDialog[open]{display:flex;flex-direction:column}#dictionaryDialog>.dialog-heading,#dictionaryDialog>.dialog-footer{flex-shrink:0}
 .dictionary-content{display:flex;flex-direction:column;min-height:0;flex:1}.dictionary-content nav{padding:0 20px}.dictionary-panel{padding:12px 24px;overflow:auto;min-height:0;flex:1}
 .dictionary-toolbar{display:flex;gap:8px;align-items:center;margin:12px 0;flex-wrap:wrap}.dictionary-toolbar label{margin:0}.dictionary-toolbar select{width:190px}.dictionary-toolbar input{flex:1;min-width:160px}.dictionary-toolbar button{font-size:12px;white-space:nowrap}

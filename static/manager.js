@@ -372,6 +372,26 @@ $('testApi').onclick = async () => {
   catch (e) { $('settingsState').textContent = e.message; }
   finally { $('testApi').disabled = false; }
 };
+$('runDiagnostics').onclick = async () => {
+  const button = $('runDiagnostics'), list = $('diagnosticsList');
+  button.disabled = true; list.replaceChildren(); $('diagnosticsState').textContent = 'Comprobando…';
+  try {
+    const report = await api('/diagnostics');
+    const labels = {ok:'Funciona', missing:'Falta', blocked:'Bloqueado', error:'Con errores'};
+    report.checks.forEach(check => {
+      const row = document.createElement('li'); row.className = check.ok ? 'diagnostic ok' : 'diagnostic problem';
+      const title = document.createElement('strong'); title.textContent = `${labels[check.state]}: ${check.label}`;
+      const about = document.createElement('div'); about.className = 'hint'; about.textContent = `Afecta a: ${check.affects}${check.detail ? ` · ${check.detail}` : ''}`;
+      row.append(title, about);
+      if (check.action) { const action = document.createElement('div'); action.textContent = check.action; row.append(action); }
+      list.append(row);
+    });
+    const problems = report.checks.filter(check => !check.ok).length;
+    $('diagnosticsState').textContent = problems ? `Hay ${problems} problema(s) en este equipo.` : 'Todo funciona en este equipo.';
+    button.textContent = 'Volver a comprobar';
+  } catch (e) { $('diagnosticsState').textContent = `No se pudo comprobar: ${e.message}`; }
+  finally { button.disabled = false; }
+};
 $('settingsDialog').addEventListener('close', () => $('apiKey').value = '');
 
 function scheduleRefresh() {
